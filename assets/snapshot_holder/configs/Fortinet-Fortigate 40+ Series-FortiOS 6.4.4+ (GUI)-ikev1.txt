@@ -1,0 +1,345 @@
+! Amazon Web Services
+! Virtual Private Cloud
+
+! AWS utilizes unique identifiers to manipulate the configuration of
+! a VPN Connection. Each VPN Connection is assigned an identifier and is
+! associated with two other identifiers, namely the
+! Customer Gateway Identifier and Virtual Private Gateway Identifier.
+!
+! Your VPN Connection ID 		              : vpn-123456789abc12345
+! Your Virtual Private Gateway ID         : vgw-00112233aabbcc112
+! Your Customer Gateway ID		            : cgw-abcabcabc12312312
+!
+!
+! This configuration consists of two tunnels. Both tunnels must be
+! configured on your Customer Gateway.
+!
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #1
+! --------------------------------------------------------------------------------
+! #1: Internet Key Exchange (IKE) Configuration
+
+Go to  VPN --> IPSEC Tunnels --> Create New (drop down) --> Select IPSEC Tunnel
+
+VPN Creation Wizard Window appears
+
+Select Template Type as “Custom”
+
+Provide a Name for the VPN connection (Name must be shorter than 15 chars, best if shorter than 12): vpn-123456789abc12345-0
+
+New VPN Tunnel Window Appears (Here we configure the VPN settings):
+
+Under “Network” Section:
+a. IP Version:     IPv4
+b. Remote Gateway: Static IP Address
+c. IP address: <AWS_ENDPOINT_1>
+d. Local Interface: wan1
+e. Local Gateway: Select Specify and enter WAN port IP (Public IP)
+f. Dead Peer Detection: Enable by selecting On Idle/ On Demand
+g. Authentication Method: Pre-shared Key
+h. Pre-Shared Key: <pre-shared-key>
+i. IKE Version: 1
+Phase 1 Proposal:
+j.  Encryption: aes128
+k. Authentication: sha1
+l. DH group: 2     ! and deselect 5
+m. Keylife: 28800 seconds
+
+! NAT Traversal is enabled by default but if your FortiGate device is not behind a NAT/PAT device, please deselect NAT Traversal.
+
+! --------------------------------------------------------------------------------
+! #2: IPSec Configuration
+
+Under Phase 2 Selectors --> New Phase 2
+a.	Name:  vpn-123456789abc12345-0
+b.	Local Address: LAN subnet behind Fortigate/0.0.0.0/0
+c.	Remote Address: AWS Private Subnet/0.0.0.0/0
+
+Under Advanced
+d.	Encryption: aes128
+e.	Authentication: sha1
+f.	Select Enable Replay Detection
+g.	Select Perfect Forward Secrecy
+h.	DH Group: 2 ! and deselect 5
+i.	Keylife: 3600 seconds
+j.	Enable Auto-negotiate   ! Autokey Keep Alive is enabled automatically when Auto-negotiate is enabled
+k.	Click Ok
+
+! --------------------------------------------------------------------------------
+! #3: Tunnel Interface Configuration
+
+! A tunnel interface is configured to be the logical interface associated
+! with the tunnel. All traffic routed to the tunnel interface will be
+! encrypted and transmitted to the VPC. Similarly, traffic from the VPC
+! will be logically received on this interface.
+!
+!
+! The address of the interface is configured with the setup for your
+! Customer Gateway.  If the address changes, the Customer Gateway and VPN
+! Connection must be recreated with Amazon VPC.
+!
+! This is required in order for tunnel failover via gwdetect to function
+!
+! Perform this from the Global VDOM.
+
+Go to Network Tab --> Interface --> wan1 and edit vpn-123456789abc12345-0
+
+a. IP : 169.254.225.142
+b. Remote IP: 169.254.225.141/30
+c. Select Ping
+d. Administrative Status: Up
+e. Select Ok.
+
+!You can set MTU and MSS on the tunnel by performing this from the CLI:
+ config global
+ config system interface
+  edit "vpn-123456789abc12345-0" ! This name will be the same as the VPN tunnel name
+    set mtu-override enable
+    set mtu 1427
+    set tcp-mss 1379
+   next
+end
+
+! --------------------------------------------------------------------------------
+! #4: Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+! The local BGP Autonomous System Number (ASN) (65000)
+! is configured as part of your Customer Gateway. If the ASN must
+! be changed, the Customer Gateway and VPN Connection will need to be recreated with AWS.
+!
+! Perform this from root VDOM.
+
+Go to Network --> BGP
+
+ a. Local-AS : 65000
+ b. Router-ID: <your-cgw-ip-address>
+ c. Click Apply
+ d. Neighbor -> Create New:
+      1. IP:  169.254.225.141
+      2. Remote AS: 64512
+      3. Click Add/Edit
+
+! Your Customer Gateway may announce a default route (0.0.0.0/0) to us. Perform the below steps:
+
+ e. Select the Neighbor IP and Click Edit
+   1. Check "Capability: default originate"
+   2. Click Ok
+
+! To advertise any prefixes to Amazon VPC, add these prefixes to the 'address-prefix'
+! statement and identify the prefix you wish to advertise. Make sure the prefix is present
+! in the routing table of the device with a valid next-hop. If you want to advertise
+! 192.168.0.0/16 to Amazon, this can be done using the following.
+
+  e. Under the Networks Tab:
+   i. IP/Netmask: 192.168.0.0/16 ! Local Subnet/Mask you wish to advertise
+   ii. Click Add
+
+
+! --------------------------------------------------------------------------------
+! #5: Firewall Policy Configuration
+! Create a firewall policy permitting traffic from your local subnet to the VPC subnet and vice versa
+! This example policy permits all traffic from the local subnet to the VPC.
+!
+!This is configured from the root VDOM
+
+
+Go to Policy & Object tab --> Firewall Policy --> Create New
+
+   a. Provide a Name for the Policy
+   b. Incoming Interface/Zone = internal ! This is the interface out which your local LAN resides
+   c. Source Address = all
+   d. Outgoing Interface/Zone = "vpn-123456789abc12345-0" ! This is the VPN tunnel interface
+   e. Destination Address = all
+   f. Schedule = always
+   g. Service = ALL
+   h. Action = ACCEPT
+   i. Click OK
+
+! NAT is enabled for the policy by default, you can disable it.
+
+! Now create a policy to permit traffic going the other way
+
+   a. Create New
+   b. Provide a Name for the Policy
+   c. Incoming Interface/Zone = "vpn-123456789abc12345-0" ! This is the VPN tunnel interface
+   d. Source Address = all
+   e. Outgoing Interface/Zone = internal  ! This is the interface out which your local LAN resides
+   f. Destination Address = all
+   g. Schedule = always
+   h. Service = ALL
+   i. Action = ACCEPT
+   j. Click OK
+
+
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #2
+! --------------------------------------------------------------------------------
+! #1: Internet Key Exchange (IKE) Configuration
+
+Go to  VPN --> IPSEC Tunnels --> Create New (drop down) --> Select IPSEC Tunnel
+
+VPN Creation Wizard Window appears
+
+Select Template Type as “Custom”
+
+Provide a Name for the VPN connection (Name must be shorter than 15 chars, best if shorter than 12): vpn-123456789abc12345-1
+
+New VPN Tunnel Window Appears (Here we configure the VPN settings):
+
+Under “Network” Section:
+a. IP Version:     IPv4
+b. Remote Gateway: Static IP Address
+c. IP address: <AWS_ENDPOINT_2>
+d. Local Interface: wan1
+e. Local Gateway: Select Specify and enter WAN port IP (Public IP)
+f. Dead Peer Detection: Enable by selecting On Idle/ On Demand
+g. Authentication Method: Pre-shared Key
+h. Pre-Shared Key: <pre-shared-key>
+i. IKE Version: 1
+Phase 1 Proposal:
+j.  Encryption: aes128
+k. Authentication: sha1
+l. DH group: 2     ! and deselect 5
+m. Keylife: 28800 seconds
+
+! NAT Traversal is enabled by default but if your FortiGate device is not behind a NAT/PAT device, please deselect NAT Traversal.
+
+! --------------------------------------------------------------------------------
+! #2: IPSec Configuration
+
+Under Phase 2 Selectors --> New Phase 2
+a.	Name:  vpn-123456789abc12345-1
+b.	Local Address: LAN subnet behind Fortigate/0.0.0.0/0
+c.	Remote Address: AWS Private Subnet/0.0.0.0/0
+
+Under Advanced
+d.	Encryption: aes128
+e.	Authentication: sha1
+f.	Select Enable Replay Detection
+g.	Select Perfect Forward Secrecy
+h.	DH Group: 2 ! and deselect 5
+i.	Keylife: 3600 seconds
+j.	Enable Auto-negotiate   ! Autokey Keep Alive is enabled automatically when Auto-negotiate is enabled
+k.	Click Ok
+
+! --------------------------------------------------------------------------------
+! #3: Tunnel Interface Configuration
+
+! A tunnel interface is configured to be the logical interface associated
+! with the tunnel. All traffic routed to the tunnel interface will be
+! encrypted and transmitted to the VPC. Similarly, traffic from the VPC
+! will be logically received on this interface.
+!
+!
+! The address of the interface is configured with the setup for your
+! Customer Gateway.  If the address changes, the Customer Gateway and VPN
+! Connection must be recreated with Amazon VPC.
+!
+! This is required in order for tunnel failover via gwdetect to function
+!
+! Perform this from the Global VDOM.
+
+Go to Network Tab --> Interface --> wan1 and edit vpn-123456789abc12345-1
+
+a. IP : 169.254.121.206
+b. Remote IP: 169.254.121.205/30
+c. Select Ping
+d. Administrative Status: Up
+e. Select Ok.
+
+!You can set MTU and MSS on the tunnel by performing this from the CLI:
+ config global
+ config system interface
+  edit "vpn-123456789abc12345-1" ! This name will be the same as the VPN tunnel name
+    set mtu-override enable
+    set mtu 1427
+    set tcp-mss 1379
+   next
+end
+
+! --------------------------------------------------------------------------------
+! #4: Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+! The local BGP Autonomous System Number (ASN) (65000)
+! is configured as part of your Customer Gateway. If the ASN must
+! be changed, the Customer Gateway and VPN Connection will need to be recreated with AWS.
+!
+! Perform this from root VDOM.
+
+Go to Network --> BGP
+
+ a. Local-AS : 65000
+ b. Router-ID: <your-cgw-ip-address>
+ c. Click Apply
+ d. Neighbor -> Create New:
+      1. IP:  169.254.121.205
+      2. Remote AS: 64512
+      3. Click Add/Edit
+
+! Your Customer Gateway may announce a default route (0.0.0.0/0) to us. Perform the below steps:
+
+ e. Select the Neighbor IP and Click Edit
+   1. Check "Capability: default originate"
+   2. Click Ok
+
+! To advertise any prefixes to Amazon VPC, add these prefixes to the 'address-prefix'
+! statement and identify the prefix you wish to advertise. Make sure the prefix is present
+! in the routing table of the device with a valid next-hop. If you want to advertise
+! 192.168.0.0/16 to Amazon, this can be done using the following.
+
+  e. Under the Networks Tab:
+   i. IP/Netmask: 192.168.0.0/16 ! Local Subnet/Mask you wish to advertise
+   ii. Click Add
+
+
+! --------------------------------------------------------------------------------
+! #5: Firewall Policy Configuration
+! Create a firewall policy permitting traffic from your local subnet to the VPC subnet and vice versa
+! This example policy permits all traffic from the local subnet to the VPC.
+!
+!This is configured from the root VDOM
+
+
+Go to Policy & Object tab --> Firewall Policy --> Create New
+
+   a. Provide a Name for the Policy
+   b. Incoming Interface/Zone = internal ! This is the interface out which your local LAN resides
+   c. Source Address = all
+   d. Outgoing Interface/Zone = "vpn-123456789abc12345-1" ! This is the VPN tunnel interface
+   e. Destination Address = all
+   f. Schedule = always
+   g. Service = ALL
+   h. Action = ACCEPT
+   i. Click OK
+
+! NAT is enabled for the policy by default, you can disable it.
+
+! Now create a policy to permit traffic going the other way
+
+   a. Create New
+   b. Provide a Name for the Policy
+   c. Incoming Interface/Zone = "vpn-123456789abc12345-1" ! This is the VPN tunnel interface
+   d. Source Address = all
+   e. Outgoing Interface/Zone = internal  ! This is the interface out which your local LAN resides
+   f. Destination Address = all
+   g. Schedule = always
+   h. Service = ALL
+   i. Action = ACCEPT
+   j. Click OK
+
+
+
+
+! Additional Notes and Questions
+!  - Amazon Virtual Private Cloud Getting Started Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/GettingStartedGuide
+!  - Amazon Virtual Private Cloud Network Administrator Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/NetworkAdminGuide

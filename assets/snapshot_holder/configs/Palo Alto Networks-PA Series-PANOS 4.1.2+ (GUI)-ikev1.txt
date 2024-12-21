@@ -1,0 +1,339 @@
+! Amazon Web Services
+! Virtual Private Cloud
+
+! AWS utilizes unique identifiers to manipulate the configuration of
+! a VPN Connection. Each VPN Connection is assigned an identifier and is
+! associated with two other identifiers, namely the
+! Customer Gateway Identifier and Virtual Private Gateway Identifier.
+!
+! Your VPN Connection ID 		  : vpn-123456789abc12345
+! Your Virtual Private Gateway ID         : vgw-00112233aabbcc112
+! Your Customer Gateway ID		  : cgw-abcabcabc12312312
+!
+!
+! This configuration consists of two tunnels. Both tunnels must be
+! configured on your Customer Gateway.
+!
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #1
+! --------------------------------------------------------------------------------
+! #1: Internet Key Exchange (IKE) Configuration
+!
+! A policy is established for the supported ISAKMP encryption,
+! authentication, Diffie-Hellman, lifetime, and key parameters.
+! Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! You will need to modify these sample configuration files to take advantage of AES256, SHA256, or other DH groups like 2, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+! The address of the external interface for your customer gateway must be a static address.
+! Your customer gateway may reside behind a device performing network address translation (NAT).
+! To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall !rules to unblock UDP port 4500.
+| If not behind NAT, and you are not using an Accelerated VPN, we recommend disabling NAT-T. If you are using an Accelerated VPN, make sure that NAT-T is enabled.
+!
+
+Go to network Tab-->IKE Crypto, create new IKE crypto
+
+ a. Name: vpn-123456789abc12345-0
+ b. DH Group: group 2
+ c. Authentication: sha1
+ d. Encryption: aes128
+ e. Lifetime: 28800 seconds
+
+
+Create IKE Gateway:
+Go to network tab--> IKE Gateway, create a new IKE Gateway
+
+ a. Name: ike-vpn-123456789abc12345-0
+ b. Interface: select your "WAN" interface
+ c. Peer type: Static
+ d. Peer IP address: <AWS_ENDPOINT_1>
+ e. pre-shared-key: <pre-shared-key>
+ f. Select Advanced:
+   1. Exchange mode: main
+   2. IKE Crypto Profile: Choose vpn-123456789abc12345-0
+   3. Dead Peer Detection: interval-10, retry-3
+
+
+
+! #2: IPSec Configuration
+!
+! The IPSec transform set defines the encryption, authentication, and IPSec
+! mode parameters.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 2, 5, 14-18, 22, 23, and 24.
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+!
+
+Go to network tab--> IPSec Crypto, and create new IPSec crypto.
+
+ a. name: ipsec-vpn-123456789abc12345-0
+ b. Encryption: aes128
+ c. Authentication: sha1
+ d. DH Group: 2
+ e. Lifetime: 3600 seconds
+
+
+! --------------------------------------------------------------------------------
+! #3: Tunnel Interface Configuration
+!
+! A tunnel interface is configured to be the logical interface associated
+! with the tunnel. All traffic routed to the tunnel interface will be
+! encrypted and transmitted to the VPC. Similarly, traffic from the VPC
+! will be logically received on this interface.
+!
+!
+! The address of the interface is configured with the setup for your
+! Customer Gateway.  If the address changes, the Customer Gateway and VPN
+! Connection must be recreated with Amazon VPC.
+!
+
+
+
+Go to network tab-->interface, and create a new tunnel interface.
+
+ a. Name: tunnel.1
+ b. Virtual Router: Select your Virtual router
+ c. IP Address: 169.254.225.142/30
+ d. MTU: 1427
+ e. Security Zone: put the tunnel in the appropriate zone.
+
+
+Go to Network Tab-->Ipsec tunnels, and create a new IPsec tunnel.
+
+ a. Name: ipsec-tunnel-1
+ b. Tunnel interface: tunnel.1
+ c. Type: Auto Key
+ d. IKE Gateway: ike-vpn-123456789abc12345-0
+ e. IPSec Crypto profile: ipsec-vpn-123456789abc12345-0
+ f. Check Show Advanced options
+ g. Check Enable Replay Protection.
+
+! --------------------------------------------------------------------------------
+
+! #4: Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+!
+!
+! The local BGP Autonomous System Number (ASN) (65000)
+! is configured as part of your Customer Gateway. If the ASN must
+! be changed, the Customer Gateway and VPN Connection will need to be recreated with AWS.
+! The BGP keepalive and hold-down timer values should be 10 and 30 seconds respectively.
+
+Go to network tab--> select virtual-router. Select the necessary virtual-router.
+Select BGP.
+
+1. General tab:
+ a. Check Enable.
+ b. Router-ID: <your-cgw-ip-address>
+ c. AS number: 65000
+
+
+2. In Peer Group tab, create new peer-group
+ a. Name: AmazonBGP
+ b. Check Enable
+ c. Type: EBGP
+ d. Add new peer:
+   i. Name: amazon-vpn-123456789abc12345-0
+   ii. Check Enable
+   iii. Peer AS: 64512
+   iv. Local address:
+      1. Interface: tunnel. vpn-123456789abc12345-0
+      2. IP: 169.254.225.142
+   v. Peer IP address:
+      1. IP: 169.254.225.141
+   vi. Click ok
+
+! Your Customer Gateway may announce a default route (0.0.0.0/0) to us. This is done as follows:
+
+3. Under Export rule, create new rule:
+ a. Under General tab:
+   i. Name: Export_to_Amazon
+   ii. Used By: AmazonBGP
+
+ b. Under Match tab:
+   i. Add a new address prefix 0.0.0.0/0, and check exact.
+
+! To advertise additional prefixes to Amazon VPC, add these prefixes to the 'address-prefix'
+! statement and identify the prefix you wish to advertise. Make sure the prefix is present
+! in the routing table of the device with a valid next-hop. If you want to advertise
+! 192.168.0.0/16 to Amazon, this can be done using the following.
+
+4. Under Export rule, create new rule:
+  a. Under General tab:
+    i. Name: Export_to_Amazon
+    ii. Used By: AmazonBGP
+
+  b. Under Match tab:
+    i. Add a new address prefix 192.168.0.0/16, and check exact.
+
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #2
+! --------------------------------------------------------------------------------
+! #1: Internet Key Exchange (IKE) Configuration
+!
+! A policy is established for the supported ISAKMP encryption,
+! authentication, Diffie-Hellman, lifetime, and key parameters.
+! Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! You will need to modify these sample configuration files to take advantage of AES256, SHA256, or other DH groups like 2, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+! The address of the external interface for your customer gateway must be a static address.
+! Your customer gateway may reside behind a device performing network address translation (NAT).
+! To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall !rules to unblock UDP port 4500.
+| If not behind NAT, and you are not using an Accelerated VPN, we recommend disabling NAT-T. If you are using an Accelerated VPN, make sure that NAT-T is enabled.
+!
+
+Go to network Tab-->IKE Crypto, create new IKE crypto
+
+ a. Name: vpn-123456789abc12345-1
+ b. DH Group: group 2
+ c. Authentication: sha1
+ d. Encryption: aes128
+ e. Lifetime: 28800 seconds
+
+
+Create IKE Gateway:
+Go to network tab--> IKE Gateway, create a new IKE Gateway
+
+ a. Name: ike-vpn-123456789abc12345-1
+ b. Interface: select your "WAN" interface
+ c. Peer type: Static
+ d. Peer IP address: <AWS_ENDPOINT_2>
+ e. pre-shared-key: <pre-shared-key>
+ f. Select Advanced:
+   1. Exchange mode: main
+   2. IKE Crypto Profile: Choose vpn-123456789abc12345-1
+   3. Dead Peer Detection: interval-10, retry-3
+
+
+
+! #2: IPSec Configuration
+!
+! The IPSec transform set defines the encryption, authentication, and IPSec
+! mode parameters.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 2, 5, 14-18, 22, 23, and 24.
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+!
+
+Go to network tab--> IPSec Crypto, and create new IPSec crypto.
+
+ a. name: ipsec-vpn-123456789abc12345-1
+ b. Encryption: aes128
+ c. Authentication: sha1
+ d. DH Group: 2
+ e. Lifetime: 3600 seconds
+
+
+! --------------------------------------------------------------------------------
+! #3: Tunnel Interface Configuration
+!
+! A tunnel interface is configured to be the logical interface associated
+! with the tunnel. All traffic routed to the tunnel interface will be
+! encrypted and transmitted to the VPC. Similarly, traffic from the VPC
+! will be logically received on this interface.
+!
+!
+! The address of the interface is configured with the setup for your
+! Customer Gateway.  If the address changes, the Customer Gateway and VPN
+! Connection must be recreated with Amazon VPC.
+!
+
+
+
+Go to network tab-->interface, and create a new tunnel interface.
+
+ a. Name: tunnel.2
+ b. Virtual Router: Select your Virtual router
+ c. IP Address: 169.254.121.206/30
+ d. MTU: 1427
+ e. Security Zone: put the tunnel in the appropriate zone.
+
+
+Go to Network Tab-->Ipsec tunnels, and create a new IPsec tunnel.
+
+ a. Name: ipsec-tunnel-2
+ b. Tunnel interface: tunnel.2
+ c. Type: Auto Key
+ d. IKE Gateway: ike-vpn-123456789abc12345-1
+ e. IPSec Crypto profile: ipsec-vpn-123456789abc12345-1
+ f. Check Show Advanced options
+ g. Check Enable Replay Protection.
+
+! --------------------------------------------------------------------------------
+
+! #4: Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+!
+!
+! The local BGP Autonomous System Number (ASN) (65000)
+! is configured as part of your Customer Gateway. If the ASN must
+! be changed, the Customer Gateway and VPN Connection will need to be recreated with AWS.
+! The BGP keepalive and hold-down timer values should be 10 and 30 seconds respectively.
+
+Go to network tab--> select virtual-router. Select the necessary virtual-router.
+Select BGP.
+
+1. General tab:
+ a. Check Enable.
+ b. Router-ID: <your-cgw-ip-address>
+ c. AS number: 65000
+
+
+2. In Peer Group tab, create new peer-group
+ a. Name: AmazonBGP
+ b. Check Enable
+ c. Type: EBGP
+ d. Add new peer:
+   i. Name: amazon-vpn-123456789abc12345-1
+   ii. Check Enable
+   iii. Peer AS: 64512
+   iv. Local address:
+      1. Interface: tunnel. vpn-123456789abc12345-1
+      2. IP: 169.254.121.206
+   v. Peer IP address:
+      1. IP: 169.254.121.205
+   vi. Click ok
+
+! Your Customer Gateway may announce a default route (0.0.0.0/0) to us. This is done as follows:
+
+3. Under Export rule, create new rule:
+ a. Under General tab:
+   i. Name: Export_to_Amazon
+   ii. Used By: AmazonBGP
+
+ b. Under Match tab:
+   i. Add a new address prefix 0.0.0.0/0, and check exact.
+
+! To advertise additional prefixes to Amazon VPC, add these prefixes to the 'address-prefix'
+! statement and identify the prefix you wish to advertise. Make sure the prefix is present
+! in the routing table of the device with a valid next-hop. If you want to advertise
+! 192.168.0.0/16 to Amazon, this can be done using the following.
+
+4. Under Export rule, create new rule:
+  a. Under General tab:
+    i. Name: Export_to_Amazon
+    ii. Used By: AmazonBGP
+
+  b. Under Match tab:
+    i. Add a new address prefix 192.168.0.0/16, and check exact.
+
+
+
+! Additional Notes and Questions
+!  - Amazon Virtual Private Cloud Getting Started Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/GettingStartedGuide
+!  - Amazon Virtual Private Cloud Network Administrator Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/NetworkAdminGuide

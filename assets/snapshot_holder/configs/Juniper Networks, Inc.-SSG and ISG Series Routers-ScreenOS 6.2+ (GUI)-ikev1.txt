@@ -1,0 +1,398 @@
+# Amazon Web Services
+# Virtual Private Cloud
+#
+# AWS utilizes unique identifiers to manipulate the configuration of
+# a VPN Connection. Each VPN Connection is assigned a VPN Connection Identifier
+# and is associated with two other identifiers, namely the
+# Customer Gateway Identifier and the Virtual Private Gateway Identifier.
+#
+# Your VPN Connection ID 		    : vpn-123456789abc12345
+# Your Virtual Private Gateway ID           : vgw-00112233aabbcc112
+# Your Customer Gateway ID		    : cgw-abcabcabc12312312
+#
+# This configuration consists of two tunnels. Both tunnels must be
+# configured on your Customer Gateway.
+#
+# This configuration was tested on a Juniper SSG-5 running ScreenOS 6.3R11.
+#
+
+# --------------------------------------------------------------------------------
+# IPSec Tunnel #1
+# --------------------------------------------------------------------------------
+
+# #1: Tunnel Interface Configuration
+# The tunnel interface is configured with the internal IP address.
+#
+# To establish connectivity between your internal network and the VPC, you
+# must have an interface facing your internal network in the "Trust" zone.
+#
+#
+
+Expand Network -> Interfaces -> List
+On the Right Top corner, select "Tunnel IF" and click New
+
+ a. Tunnel Interface Name: tunnel.1
+ b. Zone (VR): Trust
+ c. Select Fixed IP -> IP Address / Netmask: 169.254.225.142/30
+ d. Maximum Transfer Unit(MTU) Admin MTU: 1436
+Click OK
+
+# By default, the router will block asymmetric VPN traffic, which may occur
+# with this VPN Connection. This occurs, for example, when routing policies
+# cause traffic to sent from your router to VPC through one IPSec tunnel
+# while traffic returns from VPC through the other.
+#
+# In order to allow asymmetric routing over VPN, enable "asymmetric-vpn" on
+# the tunnel interface zone
+
+Expand Network -> Zones -> Click Edit for Trust Zone
+Select Asymmetric VPN
+Click OK
+
+# This option causes the router to reduce the Maximum Segment Size of
+# TCP packets to prevent packet fragmentation.
+#
+# This command has to be entered via the CLI
+
+set flow vpn-tcp-mss 1387
+
+
+# --------------------------------------------------------------------------------
+# #2: Internet Key Exchange (IKE) Configuration
+#
+# A proposal is established for the supported IKE encryption,
+# authentication, Diffie-Hellman, and lifetime parameters.
+# Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+# Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+# You will need to modify these sample configuration files to take advantage of AES256, SHA256, or other DH groups like 2, 14-18, 22, 23, and 24.
+# NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+#
+# Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+# The address of the external interface for your customer gateway must be a static address.
+# Your customer gateway may reside behind a device performing network address translation (NAT).
+# To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall rules to unblock UDP port 4500.
+| If not behind NAT, and you are not using an Accelerated VPN, we recommend disabling NAT-T. If you are using an Accelerated VPN, make sure that NAT-T is enabled.
+#
+Create IKE (Phase 1) Proposal:
+
+Expand VPNs -> AutoKey Advanced -> Click on P1 Proposal -> New
+
+ a. Name: ike-prop-vpn-123456789abc12345-1
+ b. Authentication Method: Preshare
+ c. DH Group: Group 2
+ d. Encryption Algorithm: AES-CBC(128 Bits)
+ e. Hash Algorithm: SHA-1
+ e. Lifetime: 28800 seconds
+Click OK
+
+# The IKE gateway is defined to be the Virtual Private Gateway. The gateway
+# configuration associates a local interface, remote IP address, and
+# IKE policy.
+#
+#
+# This address is configured with the setup for your Customer Gateway.
+#
+# If the address changes, the Customer Gateway and VPN Connection must be recreated.
+#
+Create IKE (Phase 1) Gateway:
+
+Expand VPNs -> AutoKey Advanced -> Click on Gateway -> New
+
+ a. Gateway Name: gw-vpn-123456789abc12345-1
+ b. Select Remote Gateway -> Static IP Address -> IP Address/Hostname: <AWS_ENDPOINT_1>
+    Click Advanced
+ c. Preshared Key: <pre-shared-key>
+ d. Outgoing Interface: Select your WAN interface
+ e. Security Level -> User Defined -> Select Custom -> Phase 1 Proposal: Choose ike-prop-vpn-123456789abc12345-1
+ f. Peer Status Detection -> Select DPD ->
+        1. Interval: 10
+        2. Retry: 3
+Click Return
+Click OK
+
+# Troubleshooting IKE connectivity can be aided by enabling IKE debugging.
+# To do so, run the following commands on the CLI:
+# clear dbuf         -- Clear debug buffer
+# debug ike all      -- Enable IKE debugging
+# get dbuf stream    -- View debug messages
+# undebug all        -- Turn off debugging
+
+
+# --------------------------------------------------------------------------------
+# #3: IPSec Configuration
+#
+# The IPSec (Phase 2) proposal defines the protocol, authentication,
+# encryption, and lifetime parameters for our IPSec security association.
+# Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+# Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 2, 5, 14-18, 22, 23, and 24.
+# Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+#
+
+Create IPSEC (Phase 2) Proposal:
+
+Expand VPNs -> AutoKey Advanced -> Click on P2 Proposal -> New
+
+ a. Name: ipsec-prop-vpn-123456789abc12345-1
+ b. Perfect Forward Secrecy: DH Group 2
+ c. Select Encryption (ESP) ->
+        1. Encryption Algorithm: AES-CBC(128 Bits)
+        2. Authentication Algorithm: SHA-1
+ d. Lifetime -> In Time: 3600 seconds
+Click OK
+
+Create IPSEC (Phase 2) Tunnel:
+
+Expand VPNs -> AutoKey IKE -> New
+
+ a. VPN Name: IPSEC-vpn-123456789abc12345-1
+ b. Select Remote Gateway -> Select Predefined -> Choose gw-vpn-123456789abc12345-1
+    Click Advanced
+ c. Security Level -> User Defined -> Select Custom -> Phase 2 Proposal -> Choose ipsec-prop-vpn-123456789abc12345-1
+ d. Select Replay Protection
+ e. Bind to -> Tunnel interface -> Choose tunnel.1
+Click Return
+Click OK
+
+
+# --------------------------------------------------------------------------------
+# #4: Border Gateway Protocol (BGP) Configuration
+#
+# BGP is used within the tunnel to exchange prefixes between the
+# Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+# will announce the prefix corresponding to your VPC.
+#
+#
+# The BGP timers are adjusted to provide more rapid detection of outages.
+#
+# The local BGP Autonomous System Number (ASN) (65000) is configured
+# as part of your Customer Gateway. If the ASN must be changed, the
+# Customer Gateway and VPN Connection will need to be recreated with AWS.
+#
+
+Expand Network -> Routing -> Virtual Routers -> For the Trust VR, click Edit (Under Configure)
+Dynamic Routing Protocol Support -> Create BGP Instance
+
+ a. AS number: 65000
+ b. Hold Time -> Select Enable: 30
+ c. Select BGP Enabled
+Click OK
+
+Dynamic Routing Protocol Support -> Edit BGP Instance
+
+1. Networks tab:
+ a. IP/Netmask: Select the network you want to advertise to the AWS VPC
+ Click Add
+
+# To advertise additional prefixes to Amazon VPC, add them in the "IP/Netmask" field. Make sure the
+# prefix is present in the routing table of the device with a valid next-hop
+
+2. Neighbors tab:
+ a. AS Number: 64512
+ b. Remote IP: 169.254.225.141
+ Click Add
+ Under Actions -> Click Configure
+ c. Select Peer Enabled
+
+# Your Customer Gateway may announce a default route (0.0.0.0/0)
+# In order to do this ->
+# Select "Send default route to peer"
+
+Click OK
+
+Expand Network -> Interfaces -> List -> Click Edit for tunnel.1
+
+BGP tab: Select Enable -> Apply
+
+# --------------------------------------------------------------------------------
+# IPSec Tunnel #2
+# --------------------------------------------------------------------------------
+
+# #1: Tunnel Interface Configuration
+# The tunnel interface is configured with the internal IP address.
+#
+# To establish connectivity between your internal network and the VPC, you
+# must have an interface facing your internal network in the "Trust" zone.
+#
+#
+
+Expand Network -> Interfaces -> List
+On the Right Top corner, select "Tunnel IF" and click New
+
+ a. Tunnel Interface Name: tunnel.2
+ b. Zone (VR): Trust
+ c. Select Fixed IP -> IP Address / Netmask: 169.254.121.206/30
+ d. Maximum Transfer Unit(MTU) Admin MTU: 1436
+Click OK
+
+# By default, the router will block asymmetric VPN traffic, which may occur
+# with this VPN Connection. This occurs, for example, when routing policies
+# cause traffic to sent from your router to VPC through one IPSec tunnel
+# while traffic returns from VPC through the other.
+#
+# In order to allow asymmetric routing over VPN, enable "asymmetric-vpn" on
+# the tunnel interface zone
+
+Expand Network -> Zones -> Click Edit for Trust Zone
+Select Asymmetric VPN
+Click OK
+
+# This option causes the router to reduce the Maximum Segment Size of
+# TCP packets to prevent packet fragmentation.
+#
+# This command has to be entered via the CLI
+
+set flow vpn-tcp-mss 1387
+
+
+# --------------------------------------------------------------------------------
+# #2: Internet Key Exchange (IKE) Configuration
+#
+# A proposal is established for the supported IKE encryption,
+# authentication, Diffie-Hellman, and lifetime parameters.
+# Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+# Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+# You will need to modify these sample configuration files to take advantage of AES256, SHA256, or other DH groups like 2, 14-18, 22, 23, and 24.
+# NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+#
+# Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+# The address of the external interface for your customer gateway must be a static address.
+# Your customer gateway may reside behind a device performing network address translation (NAT).
+# To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall rules to unblock UDP port 4500.
+| If not behind NAT, and you are not using an Accelerated VPN, we recommend disabling NAT-T. If you are using an Accelerated VPN, make sure that NAT-T is enabled.
+#
+Create IKE (Phase 1) Proposal:
+
+Expand VPNs -> AutoKey Advanced -> Click on P1 Proposal -> New
+
+ a. Name: ike-prop-vpn-123456789abc12345-2
+ b. Authentication Method: Preshare
+ c. DH Group: Group 2
+ d. Encryption Algorithm: AES-CBC(128 Bits)
+ e. Hash Algorithm: SHA-1
+ e. Lifetime: 28800 seconds
+Click OK
+
+# The IKE gateway is defined to be the Virtual Private Gateway. The gateway
+# configuration associates a local interface, remote IP address, and
+# IKE policy.
+#
+#
+# This address is configured with the setup for your Customer Gateway.
+#
+# If the address changes, the Customer Gateway and VPN Connection must be recreated.
+#
+Create IKE (Phase 1) Gateway:
+
+Expand VPNs -> AutoKey Advanced -> Click on Gateway -> New
+
+ a. Gateway Name: gw-vpn-123456789abc12345-2
+ b. Select Remote Gateway -> Static IP Address -> IP Address/Hostname: <AWS_ENDPOINT_2>
+    Click Advanced
+ c. Preshared Key: <pre-shared-key>
+ d. Outgoing Interface: Select your WAN interface
+ e. Security Level -> User Defined -> Select Custom -> Phase 1 Proposal: Choose ike-prop-vpn-123456789abc12345-2
+ f. Peer Status Detection -> Select DPD ->
+        1. Interval: 10
+        2. Retry: 3
+Click Return
+Click OK
+
+# Troubleshooting IKE connectivity can be aided by enabling IKE debugging.
+# To do so, run the following commands on the CLI:
+# clear dbuf         -- Clear debug buffer
+# debug ike all      -- Enable IKE debugging
+# get dbuf stream    -- View debug messages
+# undebug all        -- Turn off debugging
+
+
+# --------------------------------------------------------------------------------
+# #3: IPSec Configuration
+#
+# The IPSec (Phase 2) proposal defines the protocol, authentication,
+# encryption, and lifetime parameters for our IPSec security association.
+# Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+# Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 2, 5, 14-18, 22, 23, and 24.
+# Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+#
+
+Create IPSEC (Phase 2) Proposal:
+
+Expand VPNs -> AutoKey Advanced -> Click on P2 Proposal -> New
+
+ a. Name: ipsec-prop-vpn-123456789abc12345-2
+ b. Perfect Forward Secrecy: DH Group 2
+ c. Select Encryption (ESP) ->
+        1. Encryption Algorithm: AES-CBC(128 Bits)
+        2. Authentication Algorithm: SHA-1
+ d. Lifetime -> In Time: 3600 seconds
+Click OK
+
+Create IPSEC (Phase 2) Tunnel:
+
+Expand VPNs -> AutoKey IKE -> New
+
+ a. VPN Name: IPSEC-vpn-123456789abc12345-2
+ b. Select Remote Gateway -> Select Predefined -> Choose gw-vpn-123456789abc12345-2
+    Click Advanced
+ c. Security Level -> User Defined -> Select Custom -> Phase 2 Proposal -> Choose ipsec-prop-vpn-123456789abc12345-2
+ d. Select Replay Protection
+ e. Bind to -> Tunnel interface -> Choose tunnel.2
+Click Return
+Click OK
+
+
+# --------------------------------------------------------------------------------
+# #4: Border Gateway Protocol (BGP) Configuration
+#
+# BGP is used within the tunnel to exchange prefixes between the
+# Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+# will announce the prefix corresponding to your VPC.
+#
+#
+# The BGP timers are adjusted to provide more rapid detection of outages.
+#
+# The local BGP Autonomous System Number (ASN) (65000) is configured
+# as part of your Customer Gateway. If the ASN must be changed, the
+# Customer Gateway and VPN Connection will need to be recreated with AWS.
+#
+
+Expand Network -> Routing -> Virtual Routers -> For the Trust VR, click Edit (Under Configure)
+Dynamic Routing Protocol Support -> Create BGP Instance
+
+ a. AS number: 65000
+ b. Hold Time -> Select Enable: 30
+ c. Select BGP Enabled
+Click OK
+
+Dynamic Routing Protocol Support -> Edit BGP Instance
+
+1. Networks tab:
+ a. IP/Netmask: Select the network you want to advertise to the AWS VPC
+ Click Add
+
+# To advertise additional prefixes to Amazon VPC, add them in the "IP/Netmask" field. Make sure the
+# prefix is present in the routing table of the device with a valid next-hop
+
+2. Neighbors tab:
+ a. AS Number: 64512
+ b. Remote IP: 169.254.121.205
+ Click Add
+ Under Actions -> Click Configure
+ c. Select Peer Enabled
+
+# Your Customer Gateway may announce a default route (0.0.0.0/0)
+# In order to do this ->
+# Select "Send default route to peer"
+
+Click OK
+
+Expand Network -> Interfaces -> List -> Click Edit for tunnel.2
+
+BGP tab: Select Enable -> Apply
+
+# Additional Notes and Questions
+#  - Amazon Virtual Private Cloud Getting Started Guide:
+#       http://docs.amazonwebservices.com/AmazonVPC/latest/GettingStartedGuide
+#  - Amazon Virtual Private Cloud Network Administrator Guide:
+#       http://docs.amazonwebservices.com/AmazonVPC/latest/NetworkAdminGuide
+      

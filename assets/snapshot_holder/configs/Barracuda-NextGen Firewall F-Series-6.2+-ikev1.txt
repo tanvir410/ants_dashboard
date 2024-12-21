@@ -1,0 +1,439 @@
+! Amazon Web Services
+! Virtual Private Cloud
+
+! AWS utilizes unique identifiers to manipulate the configuration of
+! a VPN Connection. Each VPN Connection is assigned an identifier and is
+! associated with two other identifiers, namely the
+! Customer Gateway Identifier and Virtual Private Gateway Identifier.
+!
+! Your VPN Connection ID 		  : vpn-123456789abc12345
+! Your Virtual Private Gateway ID         : vgw-00112233aabbcc112
+! Your Customer Gateway ID		  : cgw-abcabcabc12312312
+!
+!
+! This configuration consists of two tunnels. Both tunnels must be
+! configured on your Customer Gateway.
+!
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #1
+! --------------------------------------------------------------------------------
+! #1: VPN Next-hop Interfaces
+!
+! A VPN Next-hop interface is configured to be the logical interface associated
+! with the tunnel. All traffic routed to the VPN Next-hop interface will be
+! encrypted and transmitted to the VPC. Similarly, traffic from the VPC
+! will be logically received on this interface.
+!
+!
+! The address of the interface is configured with the setup for your
+! Customer Gateway.  If the address changes, the Customer Gateway and VPN
+! Connection must be recreated with Amazon VPC.
+!
+
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->VPN (VPN-Service)-->VPN Settings
+b. On VPN Settings page
+	1. Click on Lock
+	2. Click on Click here for Server Settings
+c. On Server Settings window
+	1. Click on Advanced tab
+	2. Under VPN Next Hop Interface Configuration section, click Add to create a new VPN Next Hop Interface
+		i. On VPN Interface Properties window configure
+			a. VPN Interface Index: Enter a unique interface index number between 0 and 99. Example., For AWS tunnel1: 5 and for AWS tunnel2: 6
+			b. MTU: Enter 1399
+			c. IP Addresses: 169.254.225.142/30
+			d. Click Ok
+		ii. Click Ok
+	3. Click on Send Changes
+	4. Click on Activate Pending and Activate
+
+! --------------------------------------------------------------------------------
+! #2: IKE Configuration
+!
+! A policy is established for the supported ISAKMP encryption,
+! authentication, Diffie-Hellman, lifetime, and key parameters.
+! Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! You will need to modify these sample configuration files to take advantage of AES256, SHA256, or other DH groups like 2, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+! The address of the external interface for your customer gateway must be a static address.
+! Your customer gateway may reside behind a device performing network address translation (NAT).
+! To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall !rules to unblock UDP port 4500.
+| If not behind NAT, and you are not using an Accelerated VPN, we recommend disabling NAT-T. If you are using an Accelerated VPN, make sure that NAT-T is enabled.
+!
+
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->VPN (VPN-Service)-->Site to Site
+b. Click on IPsec IKEv1 Tunnels tab
+c. Click on Lock
+d. Right click and click on New IPsec IKEv1 tunnel...
+d. On the IPsec IKEv1 Tunnel window, enter the phase 1 configuration
+		1. Enter a Name for the tunnel. Example., For tunnel1: AWSTunnel1 and for tunnel2: AWSTunnel2
+		2. On the Basics tab, enter Phase 1 configuration
+			i. Encryption: aes128
+			ii. Hash Meth.: sha1
+			iii. DH-Group: Group 2
+			iv. Lifetime [sec]: 28800 seconds (Leave default values for Min. Lifetime and Max. Lifetime)
+		3. On the Local Networks tab
+			i. Local IKE Gateway: Enter your Customer Gateway IP: <your-cgw-ip-address>
+			ii. Network Address: Enter the Inside IP address of the Customer Gateway: 169.254.225.142 and click Add
+			iii. Click Ok on the warning
+		4. On the Identify tab
+			i. Identification Type: Shared Secret
+		5. On the Remote Networks tab
+			i. Remote IKE Gateway: Enter AWS Virtual Private Gateway IP: <AWS_ENDPOINT_1>
+			ii. Network Address: Enter the Inside IP address of the Virtual Private Gateway: 169.254.225.141 and click Add
+			iii. Click Ok on the warning
+		6. On the Peer Identification tab
+			i. Shared Secret: <pre-shared-key>
+e. Click on Send Changes
+f. Click on Activate Pending and Activate
+
+
+! --------------------------------------------------------------------------------
+! #3: IPSec Configuration
+!
+! The IPSec transform set defines the encryption, authentication, and IPSec
+! mode parameters.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 2, 5, 14-18, 22, 23, and 24.
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+!
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->VPN (VPN-Service)-->Site to Site
+b. Click on IPsec IKEv1 Tunnels tab
+c. Click on Lock
+d. Click on IPsec IKEv1 tunnel that was created during the IKE configuration
+d. On the IPsec IKEv1 Tunnel window, enter the phase 2 configuration
+		1. On the Basics tab, enter Phase 2 configuration
+			i. Encryption: aes128
+			ii. Hash Meth.: sha1
+			iii. DH-Group: 2
+			iv. Lifetime [sec]: 3600 seconds (Leave default values for Min. Lifetime and Max. Lifetime)
+			v. Leave the Enable Perfect Forward Secrecy box checked
+		2. On the Advanced tab
+			i. DPD interval (s): 10
+			ii. Interface Index: Enter the VPN Interface Index number that you used during VPN Next Hop Interface configuration. Example., For AWS tunnel1: 5 and for AWS tunnel2: 6
+			iii. VPN Next Hop Routing: Enter the Inside IP address of the Virtual Private Gateway: 169.254.225.141
+			iv. Click Ok
+e. Click on Send Changes
+f. Click on Activate Pending and Activate
+
+
+! --------------------------------------------------------------------------------
+! #4: Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+!
+! The local BGP Autonomous System Number (ASN) (65000)
+! is configured as part of your Customer Gateway. If the ASN must
+! be changed, the Customer Gateway and VPN Connection will need to be recreated with AWS.
+! The BGP keepalive and hold-down timer values should be 10 and 30 seconds respectively.
+!
+
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->BGP (OSPF-RIP-BGP-Service)-->OSPF/RIP/BGP Settings
+b. Click on Lock
+c. On Operational Setup menu, enter the configuration
+	1. Run BGP Router: yes
+	2. Operation Mode: advertise-learn
+d. In the left menu, expand the Configuration Mode and click on Switch to Advanced View
+e. In the left menu, click on BGP Router Setup and enter the configuration
+	1. AS Number: 65000
+	2. Networks: Add your LAN subnet that you would like to advertise to AWS
+	3. Advanced Settings: Click Set if it not already set (or) Click Edit if you have previously configured them
+		i. On the Advanced Settings window, enter the configuration
+			a. Keep Alive Timer: 10
+			b. Hold Timer: 30
+		ii. Click Ok
+f. Click on Send Changes
+g. Click on Activate Pending and Activate
+h. In the left menu, click on Neighbor Setup IPv4
+i. Click on Lock
+j. To add a new neighbor, click on + sign next to Neighbors
+	1. Name: vpn-123456789abc12345-0
+	2. On Neighbors:vpn-123456789abc12345-0 window
+		i. Under Usage and IP, enter the configuration
+			a. Neighbor IPv4: 169.254.225.141
+			b. OSPF Routing Protocol Usage: no
+			c. RIP Routing Protocol Usage: no
+			d. BGP Routing Protocol Usage: yes
+		ii. Under BGP Parameters, enter the configuration
+			a. AS Number: 64512
+			b. Update Source: Interface
+			c. Update Source Interface: Enter the vpnr interface. Example., For AWS tunnel1: vpnr5 and for AWS tunnel2: vpnr6
+	3. Click Ok
+	4. Click Send Changes
+	5. Click Activation Pending and Activate
+
+! --------------------------------------------------------------------------------
+! #5: AS-path Prepend Configuration (Configure this step #5 only for the second tunnel)
+!
+! Lengthen the AS-path on the second tunnel to make it less preferable. Traffic would prefer the first tunnel over the second.
+!
+
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->BGP (OSPF-RIP-BGP-Service)-->OSPF/RIP/BGP Settings
+b. In the left menu, click on Filter Setup IPv4
+c. Click on Lock
+d. To add an access list rule, click on + sign next to Acces Lists IPv4
+e. In the Access Lists IPv4 pop-up window, enter a name for the access list
+f. Provide a description for the access list and click + sign next to Type
+g. On the drop down menu, select permit for Type
+h. On the Network Prefix field, enter the second tunnel's Inside IP of the Virtual Private Gateway
+i. Click on Ok
+j. Click on Ok to go back to 'OSPF/RIP/BGP Settings - Filter Setup IPv4' page
+k. To add a Route Map IPv4 Filter, click on + sign next to Route Map IPv4
+l. In the Route Maps IPv4 pop-up window, enter a name for the route map
+n. Provide a description for the route map
+o. Under BGP Specific Conditions, click on the + sign next to Route Map Entry
+p. On the Route Map Entry page, enter the configuration
+	1. Sequence Number: Enter a unique number
+	2. Type: permit
+	3. Match Condition: Access_List
+	4. ACL Name: From the drop down menu, select the access list that you created earlier
+	5. Set Action: AS_Path
+	6. Set addition to AS-Path: 64512
+q. Click on Ok
+r. Click on Ok to go back to 'OSPF/RIP/BGP Settings - Filter Setup IPv4' page
+s. Click Send Changes
+t. Click Activation Pending and Activate
+
+! --------------------------------------------------------------------------------
+! #6: Firewall Configuration
+!
+! Create a firewall rule permitting traffic from your local subnet to the VPC subnet and vice versa
+!
+
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->NGFW (Firewall)-->Forwarding Rules
+b. Click on Lock
+c. To insert a new firewall rule, click on + sign next to Main Rules
+d. Enter a name for the rule
+e. Select Pass from the drop down list left next to the name
+g. Bi-Directional: Check the box to enable
+h. Source: Select your LAN subnet that you are advertising via BGP
+i. Services: Any
+j. Destination: Select the AWS VPC subnet
+k. Connection Method: No SNAT
+l. In the left menu, click on Advanced and enter the configuration
+	1. Force MSS (Maximum Segment Size): 1359
+	2. Clear DF Bit: Yes
+	3. Reverse Interface (Bi-directional): Any
+m. Click on Ok
+n. Move the firewall rule to the top of your list by dragging the rule
+p. Click Activation Pending and Activate
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #2
+! --------------------------------------------------------------------------------
+! #1: VPN Next-hop Interfaces
+!
+! A VPN Next-hop interface is configured to be the logical interface associated
+! with the tunnel. All traffic routed to the VPN Next-hop interface will be
+! encrypted and transmitted to the VPC. Similarly, traffic from the VPC
+! will be logically received on this interface.
+!
+!
+! The address of the interface is configured with the setup for your
+! Customer Gateway.  If the address changes, the Customer Gateway and VPN
+! Connection must be recreated with Amazon VPC.
+!
+
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->VPN (VPN-Service)-->VPN Settings
+b. On VPN Settings page
+	1. Click on Lock
+	2. Click on Click here for Server Settings
+c. On Server Settings window
+	1. Click on Advanced tab
+	2. Under VPN Next Hop Interface Configuration section, click Add to create a new VPN Next Hop Interface
+		i. On VPN Interface Properties window configure
+			a. VPN Interface Index: Enter a unique interface index number between 0 and 99. Example., For AWS tunnel1: 5 and for AWS tunnel2: 6
+			b. MTU: Enter 1399
+			c. IP Addresses: 169.254.121.206/30
+			d. Click Ok
+		ii. Click Ok
+	3. Click on Send Changes
+	4. Click on Activate Pending and Activate
+
+! --------------------------------------------------------------------------------
+! #2: IKE Configuration
+!
+! A policy is established for the supported ISAKMP encryption,
+! authentication, Diffie-Hellman, lifetime, and key parameters.
+! Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! You will need to modify these sample configuration files to take advantage of AES256, SHA256, or other DH groups like 2, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+! The address of the external interface for your customer gateway must be a static address.
+! Your customer gateway may reside behind a device performing network address translation (NAT).
+! To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall !rules to unblock UDP port 4500.
+| If not behind NAT, and you are not using an Accelerated VPN, we recommend disabling NAT-T. If you are using an Accelerated VPN, make sure that NAT-T is enabled.
+!
+
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->VPN (VPN-Service)-->Site to Site
+b. Click on IPsec IKEv1 Tunnels tab
+c. Click on Lock
+d. Right click and click on New IPsec IKEv1 tunnel...
+d. On the IPsec IKEv1 Tunnel window, enter the phase 1 configuration
+		1. Enter a Name for the tunnel. Example., For tunnel1: AWSTunnel1 and for tunnel2: AWSTunnel2
+		2. On the Basics tab, enter Phase 1 configuration
+			i. Encryption: aes128
+			ii. Hash Meth.: sha1
+			iii. DH-Group: Group 2
+			iv. Lifetime [sec]: 28800 seconds (Leave default values for Min. Lifetime and Max. Lifetime)
+		3. On the Local Networks tab
+			i. Local IKE Gateway: Enter your Customer Gateway IP: <your-cgw-ip-address>
+			ii. Network Address: Enter the Inside IP address of the Customer Gateway: 169.254.121.206 and click Add
+			iii. Click Ok on the warning
+		4. On the Identify tab
+			i. Identification Type: Shared Secret
+		5. On the Remote Networks tab
+			i. Remote IKE Gateway: Enter AWS Virtual Private Gateway IP: <AWS_ENDPOINT_2>
+			ii. Network Address: Enter the Inside IP address of the Virtual Private Gateway: 169.254.121.205 and click Add
+			iii. Click Ok on the warning
+		6. On the Peer Identification tab
+			i. Shared Secret: <pre-shared-key>
+e. Click on Send Changes
+f. Click on Activate Pending and Activate
+
+
+! --------------------------------------------------------------------------------
+! #3: IPSec Configuration
+!
+! The IPSec transform set defines the encryption, authentication, and IPSec
+! mode parameters.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 2, 5, 14-18, 22, 23, and 24.
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+!
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->VPN (VPN-Service)-->Site to Site
+b. Click on IPsec IKEv1 Tunnels tab
+c. Click on Lock
+d. Click on IPsec IKEv1 tunnel that was created during the IKE configuration
+d. On the IPsec IKEv1 Tunnel window, enter the phase 2 configuration
+		1. On the Basics tab, enter Phase 2 configuration
+			i. Encryption: aes128
+			ii. Hash Meth.: sha1
+			iii. DH-Group: 2
+			iv. Lifetime [sec]: 3600 seconds (Leave default values for Min. Lifetime and Max. Lifetime)
+			v. Leave the Enable Perfect Forward Secrecy box checked
+		2. On the Advanced tab
+			i. DPD interval (s): 10
+			ii. Interface Index: Enter the VPN Interface Index number that you used during VPN Next Hop Interface configuration. Example., For AWS tunnel1: 5 and for AWS tunnel2: 6
+			iii. VPN Next Hop Routing: Enter the Inside IP address of the Virtual Private Gateway: 169.254.121.205
+			iv. Click Ok
+e. Click on Send Changes
+f. Click on Activate Pending and Activate
+
+
+! --------------------------------------------------------------------------------
+! #4: Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+!
+! The local BGP Autonomous System Number (ASN) (65000)
+! is configured as part of your Customer Gateway. If the ASN must
+! be changed, the Customer Gateway and VPN Connection will need to be recreated with AWS.
+! The BGP keepalive and hold-down timer values should be 10 and 30 seconds respectively.
+!
+
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->BGP (OSPF-RIP-BGP-Service)-->OSPF/RIP/BGP Settings
+b. Click on Lock
+c. On Operational Setup menu, enter the configuration
+	1. Run BGP Router: yes
+	2. Operation Mode: advertise-learn
+d. In the left menu, expand the Configuration Mode and click on Switch to Advanced View
+e. In the left menu, click on BGP Router Setup and enter the configuration
+	1. AS Number: 65000
+	2. Networks: Add your LAN subnet that you would like to advertise to AWS
+	3. Advanced Settings: Click Set if it not already set (or) Click Edit if you have previously configured them
+		i. On the Advanced Settings window, enter the configuration
+			a. Keep Alive Timer: 10
+			b. Hold Timer: 30
+		ii. Click Ok
+f. Click on Send Changes
+g. Click on Activate Pending and Activate
+h. In the left menu, click on Neighbor Setup IPv4
+i. Click on Lock
+j. To add a new neighbor, click on + sign next to Neighbors
+	1. Name: vpn-123456789abc12345-1
+	2. On Neighbors:vpn-123456789abc12345-1 window
+		i. Under Usage and IP, enter the configuration
+			a. Neighbor IPv4: 169.254.121.205
+			b. OSPF Routing Protocol Usage: no
+			c. RIP Routing Protocol Usage: no
+			d. BGP Routing Protocol Usage: yes
+		ii. Under BGP Parameters, enter the configuration
+			a. AS Number: 64512
+			b. Update Source: Interface
+			c. Update Source Interface: Enter the vpnr interface. Example., For AWS tunnel1: vpnr5 and for AWS tunnel2: vpnr6
+	3. Click Ok
+	4. Click Send Changes
+	5. Click Activation Pending and Activate
+
+! --------------------------------------------------------------------------------
+! #5: AS-path Prepend Configuration (Configure this step #5 only for the second tunnel)
+!
+! Lengthen the AS-path on the second tunnel to make it less preferable. Traffic would prefer the first tunnel over the second.
+!
+
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->BGP (OSPF-RIP-BGP-Service)-->OSPF/RIP/BGP Settings
+b. In the left menu, click on Filter Setup IPv4
+c. Click on Lock
+d. To add an access list rule, click on + sign next to Acces Lists IPv4
+e. In the Access Lists IPv4 pop-up window, enter a name for the access list
+f. Provide a description for the access list and click + sign next to Type
+g. On the drop down menu, select permit for Type
+h. On the Network Prefix field, enter the second tunnel's Inside IP of the Virtual Private Gateway
+i. Click on Ok
+j. Click on Ok to go back to 'OSPF/RIP/BGP Settings - Filter Setup IPv4' page
+k. To add a Route Map IPv4 Filter, click on + sign next to Route Map IPv4
+l. In the Route Maps IPv4 pop-up window, enter a name for the route map
+n. Provide a description for the route map
+o. Under BGP Specific Conditions, click on the + sign next to Route Map Entry
+p. On the Route Map Entry page, enter the configuration
+	1. Sequence Number: Enter a unique number
+	2. Type: permit
+	3. Match Condition: Access_List
+	4. ACL Name: From the drop down menu, select the access list that you created earlier
+	5. Set Action: AS_Path
+	6. Set addition to AS-Path: 64512
+q. Click on Ok
+r. Click on Ok to go back to 'OSPF/RIP/BGP Settings - Filter Setup IPv4' page
+s. Click Send Changes
+t. Click Activation Pending and Activate
+
+! --------------------------------------------------------------------------------
+! #6: Firewall Configuration
+!
+! Create a firewall rule permitting traffic from your local subnet to the VPC subnet and vice versa
+!
+
+a. Go to Configuration Tab-->Configuration Tree-->Box-->Virtual Servers-->Your Virtual Server-->Assigned Services-->NGFW (Firewall)-->Forwarding Rules
+b. Click on Lock
+c. To insert a new firewall rule, click on + sign next to Main Rules
+d. Enter a name for the rule
+e. Select Pass from the drop down list left next to the name
+g. Bi-Directional: Check the box to enable
+h. Source: Select your LAN subnet that you are advertising via BGP
+i. Services: Any
+j. Destination: Select the AWS VPC subnet
+k. Connection Method: No SNAT
+l. In the left menu, click on Advanced and enter the configuration
+	1. Force MSS (Maximum Segment Size): 1359
+	2. Clear DF Bit: Yes
+	3. Reverse Interface (Bi-directional): Any
+m. Click on Ok
+n. Move the firewall rule to the top of your list by dragging the rule
+p. Click Activation Pending and Activate
+
+
+! Additional Notes and Questions
+!  - Amazon Virtual Private Cloud Getting Started Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/GettingStartedGuide
+!  - Amazon Virtual Private Cloud Network Administrator Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/NetworkAdminGuide

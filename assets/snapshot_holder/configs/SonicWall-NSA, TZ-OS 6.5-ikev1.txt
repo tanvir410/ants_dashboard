@@ -1,0 +1,278 @@
+
+! Amazon Web Services
+! Virtual Private Cloud
+!
+! AWS utilizes unique identifiers to manipulate the configuration of
+! a VPN Connection. Each VPN Connection is assigned an identifier and is
+! associated with two other identifiers, namely the
+! Customer Gateway Identifier and Virtual Private Gateway Identifier.
+!
+! Your VPN Connection ID 		  : vpn-123456789abc12345
+! Your Virtual Private Gateway ID         : vgw-00112233aabbcc112
+! Your Customer Gateway ID		  : cgw-abcabcabc12312312
+!
+!
+! This configuration consists of two tunnels. Both tunnels must be
+! configured on your Customer Gateway.
+!
+! This configuration was tested on a SonicWALL TZ 500 running SonicOS Enhanced 6.5.4.7-83n
+!
+! You may need to populate these values throughout the config based on your setup:
+! <vpc_subnet> - VPC address range
+
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #1
+! --------------------------------------------------------------------------------
+
+! #1: General Configuration
+!
+! The address of the external interface for your customer gateway must be a static address.
+! Your customer gateway may reside behind a device performing network address translation (NAT).
+! To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall !rules to unblock UDP port 4500. If not behind NAT, we recommend disabling NAT-T
+!
+
+user@SerialNumber> configure
+config(SerialNumber)# vpn policy tunnel-interface vpn-123456789abc12345-0
+(add-tunnel-interface[AWSVPN])# gateway primary <AWS_ENDPOINT_1>
+(add-tunnel-interface[AWSVPN])# bound-to interface X1
+(add-tunnel-interface[AWSVPN])# auth-method shared-secret
+(auth-method-shared-secret[AWSVPN])# shared-secret <pre-shared-key>
+(auth-method-shared-secret[AWSVPN])# ike-id local ip  <your-cgw-ip-address>
+(auth-method-shared-secret[AWSVPN])# ike-id peer ip <AWS_ENDPOINT_1>
+(auth-method-shared-secret[AWSVPN])# exit
+
+! --------------------------------------------------------------------------------
+
+! #2: Internet Key Exchange (IKE) Configuration
+!
+! A proposal is established for the supported IKE encryption,
+! authentication, Diffie-Hellman, and lifetime parameters.
+! Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! You will need to modify these sample configuration files to take advantage of AES256, SHA256, or other DH groups like 2, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+
+(add-tunnel-interface[AWSVPN])# proposal ike exchange main
+(add-tunnel-interface[AWSVPN])# proposal ike dh-group 2
+(add-tunnel-interface[AWSVPN])# proposal ike encryption aes-128
+(add-tunnel-interface[AWSVPN])# proposal ike authentication sha-1
+(add-tunnel-interface[AWSVPN])# proposal ike lifetime 28800
+
+! --------------------------------------------------------------------------------
+
+! #3: IPSec Configuration
+!
+! The IPSec (Phase 2) proposal defines the protocol, authentication,
+! encryption, and lifetime parameters for our IPSec security association.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 2, 5, 14-18, 22, 23, and 24.
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+!
+
+(add-tunnel-interface[AWSVPN])# proposal ipsec protocol esp
+(add-tunnel-interface[AWSVPN])# proposal ipsec encryption aes-128
+(add-tunnel-interface[AWSVPN])# proposal ipsec authentication sha-1
+(add-tunnel-interface[AWSVPN])# proposal ipsec perfect-forward-secrecy dh-group 2
+(add-tunnel-interface[AWSVPN])# proposal ipsec lifetime 3600
+(add-tunnel-interface[AWSVPN])# Keep-alive
+(add-tunnel-interface[AWSVPN])# enable
+(add-tunnel-interface[AWSVPN])# commit
+(add-tunnel-interface[AWSVPN])# end
+
+! --------------------------------------------------------------------------------
+
+! #4:Dead Peer Detection:
+!
+! This option enables IPSec Dead Peer Detection, which causes periodic
+! messages to be sent to ensure a Security Association remains operational.
+! IPSec Dead Peer Detection (DPD) will be enabled on the AWS Endpoint. We
+! recommend configuring DPD on your endpoint as follows:
+  - DPD Interval             : 10
+  - DPD Retries              : 3
+
+config(SerialNumber)# vpn
+(config-vpn)# ike-dpd
+(config-ike-dpd)# interval 10
+(config-ike-dpd)# trigger 3
+(config-ike-dpd)# idle-dpd
+(config-ike-dpd)# commit
+(config-ike-dpd)# end
+
+! --------------------------------------------------------------------------------
+
+! #5: Tunnel Interface Configuration
+!
+! The tunnel interface is configured with the internal IP address.
+!
+! To establish connectivity between your internal network and the VPC, you
+! must have an interface facing your internal network in the "Trust" zone.
+!
+!
+config(SerialNumber)# tunnel-interface vpn T1
+(add-interface[T1])# asymmetric-route
+(add-interface[T1])# policy vpn-123456789abc12345-0
+(add-interface[T1])# ip-assignment VPN static
+(add-VPN-static)# ip 169.254.225.142 netmask 255.255.255.252
+(add-VPN-static)# commit
+(edit-VPN-static)# end
+
+! ----------------------------------------------------------------------------
+
+! #6: Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+!
+!
+! The local BGP Autonomous System Number (ASN) (65000)
+! is configured as part of your Customer Gateway. If the ASN must
+! be changed, the Customer Gateway and VPN Connection will need to be recreated with AWS.
+!
+config(SerialNumber)# routing
+(config-routing)# bgp
+ARS BGP>configure terminal
+ARS BGP(config)>router bgp 65000
+ARS BGP(config-router)>network <Local_subnet>/24
+ARS BGP(config-router)>neighbor 169.254.225.141 remote-as 64512
+ARS BGP(config-router)>neighbor 169.254.225.141 timers 10 30
+ARS BGP(config-router)>neighbor 169.254.225.141 soft-reconfiguration inbound
+ARS BGP(config-router)>end
+ARS BGP>exit
+(config-routing)# commit
+(config-routing)# end
+
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #2
+! --------------------------------------------------------------------------------
+
+! #1: General Configuration
+!
+! The address of the external interface for your customer gateway must be a static address.
+! Your customer gateway may reside behind a device performing network address translation (NAT).
+! To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall !rules to unblock UDP port 4500. If not behind NAT, we recommend disabling NAT-T
+!
+
+user@SerialNumber> configure
+config(SerialNumber)# vpn policy tunnel-interface vpn-123456789abc12345-1
+(add-tunnel-interface[AWSVPN])# gateway primary <AWS_ENDPOINT_2>
+(add-tunnel-interface[AWSVPN])# bound-to interface X1
+(add-tunnel-interface[AWSVPN])# auth-method shared-secret
+(auth-method-shared-secret[AWSVPN])# shared-secret <pre-shared-key>
+(auth-method-shared-secret[AWSVPN])# ike-id local ip  <your-cgw-ip-address>
+(auth-method-shared-secret[AWSVPN])# ike-id peer ip <AWS_ENDPOINT_2>
+(auth-method-shared-secret[AWSVPN])# exit
+
+! --------------------------------------------------------------------------------
+
+! #2: Internet Key Exchange (IKE) Configuration
+!
+! A proposal is established for the supported IKE encryption,
+! authentication, Diffie-Hellman, and lifetime parameters.
+! Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! You will need to modify these sample configuration files to take advantage of AES256, SHA256, or other DH groups like 2, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+
+(add-tunnel-interface[AWSVPN])# proposal ike exchange main
+(add-tunnel-interface[AWSVPN])# proposal ike dh-group 2
+(add-tunnel-interface[AWSVPN])# proposal ike encryption aes-128
+(add-tunnel-interface[AWSVPN])# proposal ike authentication sha-1
+(add-tunnel-interface[AWSVPN])# proposal ike lifetime 28800
+
+! --------------------------------------------------------------------------------
+
+! #3: IPSec Configuration
+!
+! The IPSec (Phase 2) proposal defines the protocol, authentication,
+! encryption, and lifetime parameters for our IPSec security association.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 2, 5, 14-18, 22, 23, and 24.
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+!
+
+(add-tunnel-interface[AWSVPN])# proposal ipsec protocol esp
+(add-tunnel-interface[AWSVPN])# proposal ipsec encryption aes-128
+(add-tunnel-interface[AWSVPN])# proposal ipsec authentication sha-1
+(add-tunnel-interface[AWSVPN])# proposal ipsec perfect-forward-secrecy dh-group 2
+(add-tunnel-interface[AWSVPN])# proposal ipsec lifetime 3600
+(add-tunnel-interface[AWSVPN])# Keep-alive
+(add-tunnel-interface[AWSVPN])# enable
+(add-tunnel-interface[AWSVPN])# commit
+(add-tunnel-interface[AWSVPN])# end
+
+! --------------------------------------------------------------------------------
+
+! #4:Dead Peer Detection:
+!
+! This option enables IPSec Dead Peer Detection, which causes periodic
+! messages to be sent to ensure a Security Association remains operational.
+! IPSec Dead Peer Detection (DPD) will be enabled on the AWS Endpoint. We
+! recommend configuring DPD on your endpoint as follows:
+  - DPD Interval             : 10
+  - DPD Retries              : 3
+
+config(SerialNumber)# vpn
+(config-vpn)# ike-dpd
+(config-ike-dpd)# interval 10
+(config-ike-dpd)# trigger 3
+(config-ike-dpd)# idle-dpd
+(config-ike-dpd)# commit
+(config-ike-dpd)# end
+
+! --------------------------------------------------------------------------------
+
+! #5: Tunnel Interface Configuration
+!
+! The tunnel interface is configured with the internal IP address.
+!
+! To establish connectivity between your internal network and the VPC, you
+! must have an interface facing your internal network in the "Trust" zone.
+!
+!
+config(SerialNumber)# tunnel-interface vpn T2
+(add-interface[T1])# asymmetric-route
+(add-interface[T1])# policy vpn-123456789abc12345-1
+(add-interface[T1])# ip-assignment VPN static
+(add-VPN-static)# ip 169.254.121.206 netmask 255.255.255.252
+(add-VPN-static)# commit
+(edit-VPN-static)# end
+
+! ----------------------------------------------------------------------------
+
+! #6: Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+!
+!
+! The local BGP Autonomous System Number (ASN) (65000)
+! is configured as part of your Customer Gateway. If the ASN must
+! be changed, the Customer Gateway and VPN Connection will need to be recreated with AWS.
+!
+config(SerialNumber)# routing
+(config-routing)# bgp
+ARS BGP>configure terminal
+ARS BGP(config)>router bgp 65000
+ARS BGP(config-router)>network <Local_subnet>/24
+ARS BGP(config-router)>neighbor 169.254.121.205 remote-as 64512
+ARS BGP(config-router)>neighbor 169.254.121.205 timers 10 30
+ARS BGP(config-router)>neighbor 169.254.121.205 soft-reconfiguration inbound
+ARS BGP(config-router)>end
+ARS BGP>exit
+(config-routing)# commit
+(config-routing)# end
+
+
+! Additional Notes and Questions
+!  - Amazon Virtual Private Cloud Getting Started Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/GettingStartedGuide
+!  - Amazon Virtual Private Cloud Network Administrator Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/NetworkAdminGuide

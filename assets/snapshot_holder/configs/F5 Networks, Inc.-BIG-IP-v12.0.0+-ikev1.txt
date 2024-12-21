@@ -1,0 +1,277 @@
+# Amazon Web Services
+# Virtual Private Cloud
+
+# AWS utilizes unique identifiers to manipulate the configuration of
+# a VPN Connection. Each VPN Connection is assigned an identifier and is
+# associated with two other identifiers, namely the
+# Customer Gateway Identifier and Virtual Private Gateway Identifier.
+#
+# Your VPN Connection ID 		  : vpn-123456789abc12345
+# Your Virtual Private Gateway ID         : vgw-00112233aabbcc112
+# Your Customer Gateway ID		  : cgw-abcabcabc12312312
+#
+#
+# This configuration consists of two tunnels. Both tunnels must be
+# configured on your Customer Gateway.
+#
+# --------------------------------------------------------------------------------
+# IPSec Tunnel #1
+# --------------------------------------------------------------------------------
+# #1: Internet Key Exchange (IKE) Configuration
+#
+# The IKE peer is configured with the supported IKE encryption,
+# authentication, Diffie-Hellman, lifetime, and key parameters.
+# Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+# Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+# You will need to modify these sample configuration files to take advantage of AES256, SHA256,
+# or other DH groups like 2, 14-18, 22, 23, and 24.
+# NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+#
+# Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+# The address of the external interface for your customer gateway must be a static address.
+# Your customer gateway may reside behind a device performing network address translation (NAT).
+# To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall
+# rules to unblock UDP port 4500.
+| If not behind NAT, and you are not using an Accelerated VPN, we recommend disabling NAT-T. If you are using an Accelerated VPN, make sure that NAT-T is enabled.
+#
+create net ipsec ike-peer peer-vpn-123456789abc12345-0 lifetime 480 my-id-type address peers-id-type address phase1-auth-method pre-shared-key phase1-encrypt-algorithm aes128 remote-address <AWS_ENDPOINT_1> verify-cert true version add { v1 } preshared-key <pre-shared-key>
+
+# #2: IPSec Configuration
+#
+# The IPSec policy defines the protocol, authentication, encryption, DH group and
+# lifetime parameters for our IPSec security association.
+#
+create net ipsec ipsec-policy ipsec-policy-vpn-123456789abc12345-0 ike-phase2-auth-algorithm sha1 ike-phase2-encrypt-algorithm aes128 ike-phase2-lifetime 60 ike-phase2-perfect-forward-secrecy modp1024 mode interface
+
+# The IPSec traffic selector is defined here.
+#
+create net ipsec traffic-selector selector-vpn-123456789abc12345-0 destination-address 169.254.225.140/30 ipsec-policy ipsec-policy-vpn-123456789abc12345-0 source-address 169.254.225.140/30
+
+# An IPSec profile is incorporated with the IPSec traffic selector.
+#
+create net tunnels ipsec profile-vpn-123456789abc12345-0 app-service none defaults-from ipsec traffic-selector selector-vpn-123456789abc12345-0
+
+# Configure IPSec Global Settings
+#
+modify sys db config.allow.rfc3927 { value "enable" }
+modify sys db ipsec.if.checkpolicy { value "disable" }
+modify sys db connection.vlankeyed { value "disable" }
+
+
+# --------------------------------------------------------------------------------
+# #3: Tunnel Interface Configuration
+#
+# A tunnel interface is configured to be the logical interface associated
+# with the tunnel. All traffic routed to the tunnel interface will be
+# encrypted and transmitted to the VPC. Similarly, traffic from the VPC
+# will be logically received on this interface.
+# The tunnel interface is defined here and tunnel self IP is configured with the internal IP address.
+#
+create net tunnels tunnel tunnel-vpn-123456789abc12345-0 local-address <your-cgw-ip-address> mtu 1427 profile profile-vpn-123456789abc12345-0 remote-address <AWS_ENDPOINT_1>
+create net self 169.254.225.142  address 169.254.225.142/30 allow-service all traffic-group traffic-group-local-only vlan tunnel-vpn-123456789abc12345-0
+
+# The tunnel keep alive pool is configured to monitor the tunnel by sending keep alive probes.
+#
+create ltm pool keepalive-vpn-123456789abc12345-0 members add { 169.254.225.141:179 { address 169.254.225.141 } } monitor tcp_half_open and gateway_icmp
+
+# Forwarding Virtual Server is configured to forward traffic between the tunnel interface and other interfaces.
+#
+create ltm profile fastL4 aws-vpn loose-close enabled loose-initialization enabled reset-on-timeout disabled
+create ltm virtual aws-vpn destination 0.0.0.0:any ip-forward profiles add { aws-vpn }
+
+# --------------------------------------------------------------------------------
+
+# #4: Border Gateway Protocol (BGP) Configuration
+#
+# BGP is used within the tunnel to exchange prefixes between the
+# Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+# will announce the prefix corresponding to your VPC.
+#
+# Your Customer Gateway may announce a default route (0.0.0.0/0),
+# which can be done with the 'network' statement and 'default-originate' statement.
+#
+# The local BGP Autonomous System Number (ASN) (65000) is configured
+# as part of your Customer Gateway. If the ASN must be changed, the
+# Customer Gateway and VPN Connection will need to be recreated with AWS.
+#
+# Enable BGP on the device.
+#
+modify net route-domain 0 routing-protocol add { BGP }
+
+#
+# Create/modify the file named ZebOS.conf in the following directory: /config/zebos/rd0/ and
+# make sure that the following lines are present in the ZebOS.conf file.
+#
+
+!
+no service password-encryption
+!
+log file /var/log/zebos
+!
+!debug bgp
+!debug bgp nsm
+!debug bgp nht
+!debug bgp events
+!debug bgp keepalives
+!debug bgp updates
+!debug bgp fsm
+!debug bgp filters
+!debug bgp dampening
+!debug bgp bfd
+!
+router bgp 65000
+ max-paths ebgp 8
+ bgp log-neighbor-changes
+ bgp graceful-restart restart-time 120
+ neighbor 169.254.225.141 remote-as 64512
+ neighbor 169.254.225.141 default-originate
+ neighbor 169.254.225.141 timers 10 90
+ neighbor 169.254.225.141 soft-reconfiguration inbound
+ neighbor 169.254.225.141 capability graceful-restart
+ network 0.0.0.0/0
+! To advertise specific prefix to Amazon VPC, replace 0.0.0.0/0 in the above network statement
+! with the prefix you want. Make sure the prefix is present in the routing table of the
+! device with a valid next-hop.
+!
+line con 0
+ login
+line vty 0 39
+ login
+!
+end
+
+#
+# --------------------------------------------------------------------------------
+# IPSec Tunnel #2
+# --------------------------------------------------------------------------------
+# #1: Internet Key Exchange (IKE) Configuration
+#
+# The IKE peer is configured with the supported IKE encryption,
+# authentication, Diffie-Hellman, lifetime, and key parameters.
+# Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+# Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+# You will need to modify these sample configuration files to take advantage of AES256, SHA256,
+# or other DH groups like 2, 14-18, 22, 23, and 24.
+# NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+#
+# Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+# The address of the external interface for your customer gateway must be a static address.
+# Your customer gateway may reside behind a device performing network address translation (NAT).
+# To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall
+# rules to unblock UDP port 4500.
+| If not behind NAT, and you are not using an Accelerated VPN, we recommend disabling NAT-T. If you are using an Accelerated VPN, make sure that NAT-T is enabled.
+#
+create net ipsec ike-peer peer-vpn-123456789abc12345-1 lifetime 480 my-id-type address peers-id-type address phase1-auth-method pre-shared-key phase1-encrypt-algorithm aes128 remote-address <AWS_ENDPOINT_2> verify-cert true version add { v1 } preshared-key <pre-shared-key>
+
+# #2: IPSec Configuration
+#
+# The IPSec policy defines the protocol, authentication, encryption, DH group and
+# lifetime parameters for our IPSec security association.
+#
+create net ipsec ipsec-policy ipsec-policy-vpn-123456789abc12345-1 ike-phase2-auth-algorithm sha1 ike-phase2-encrypt-algorithm aes128 ike-phase2-lifetime 60 ike-phase2-perfect-forward-secrecy modp1024 mode interface
+
+# The IPSec traffic selector is defined here.
+#
+create net ipsec traffic-selector selector-vpn-123456789abc12345-1 destination-address 169.254.121.204/30 ipsec-policy ipsec-policy-vpn-123456789abc12345-1 source-address 169.254.121.204/30
+
+# An IPSec profile is incorporated with the IPSec traffic selector.
+#
+create net tunnels ipsec profile-vpn-123456789abc12345-1 app-service none defaults-from ipsec traffic-selector selector-vpn-123456789abc12345-1
+
+# Configure IPSec Global Settings
+#
+modify sys db config.allow.rfc3927 { value "enable" }
+modify sys db ipsec.if.checkpolicy { value "disable" }
+modify sys db connection.vlankeyed { value "disable" }
+
+
+# --------------------------------------------------------------------------------
+# #3: Tunnel Interface Configuration
+#
+# A tunnel interface is configured to be the logical interface associated
+# with the tunnel. All traffic routed to the tunnel interface will be
+# encrypted and transmitted to the VPC. Similarly, traffic from the VPC
+# will be logically received on this interface.
+# The tunnel interface is defined here and tunnel self IP is configured with the internal IP address.
+#
+create net tunnels tunnel tunnel-vpn-123456789abc12345-1 local-address <your-cgw-ip-address> mtu 1427 profile profile-vpn-123456789abc12345-1 remote-address <AWS_ENDPOINT_2>
+create net self 169.254.121.206  address 169.254.121.206/30 allow-service all traffic-group traffic-group-local-only vlan tunnel-vpn-123456789abc12345-1
+
+# The tunnel keep alive pool is configured to monitor the tunnel by sending keep alive probes.
+#
+create ltm pool keepalive-vpn-123456789abc12345-1 members add { 169.254.121.205:179 { address 169.254.121.205 } } monitor tcp_half_open and gateway_icmp
+
+# Forwarding Virtual Server is configured to forward traffic between the tunnel interface and other interfaces.
+#
+create ltm profile fastL4 aws-vpn loose-close enabled loose-initialization enabled reset-on-timeout disabled
+create ltm virtual aws-vpn destination 0.0.0.0:any ip-forward profiles add { aws-vpn }
+
+# --------------------------------------------------------------------------------
+
+# #4: Border Gateway Protocol (BGP) Configuration
+#
+# BGP is used within the tunnel to exchange prefixes between the
+# Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+# will announce the prefix corresponding to your VPC.
+#
+# Your Customer Gateway may announce a default route (0.0.0.0/0),
+# which can be done with the 'network' statement and 'default-originate' statement.
+#
+# The local BGP Autonomous System Number (ASN) (65000) is configured
+# as part of your Customer Gateway. If the ASN must be changed, the
+# Customer Gateway and VPN Connection will need to be recreated with AWS.
+#
+# Enable BGP on the device.
+#
+modify net route-domain 0 routing-protocol add { BGP }
+
+#
+# Create/modify the file named ZebOS.conf in the following directory: /config/zebos/rd0/ and
+# make sure that the following lines are present in the ZebOS.conf file.
+#
+
+!
+no service password-encryption
+!
+log file /var/log/zebos
+!
+!debug bgp
+!debug bgp nsm
+!debug bgp nht
+!debug bgp events
+!debug bgp keepalives
+!debug bgp updates
+!debug bgp fsm
+!debug bgp filters
+!debug bgp dampening
+!debug bgp bfd
+!
+router bgp 65000
+ max-paths ebgp 8
+ bgp log-neighbor-changes
+ bgp graceful-restart restart-time 120
+ neighbor 169.254.121.205 remote-as 64512
+ neighbor 169.254.121.205 default-originate
+ neighbor 169.254.121.205 timers 10 90
+ neighbor 169.254.121.205 soft-reconfiguration inbound
+ neighbor 169.254.121.205 capability graceful-restart
+ network 0.0.0.0/0
+! To advertise specific prefix to Amazon VPC, replace 0.0.0.0/0 in the above network statement
+! with the prefix you want. Make sure the prefix is present in the routing table of the
+! device with a valid next-hop.
+!
+line con 0
+ login
+line vty 0 39
+ login
+!
+end
+
+#
+
+
+# Additional Notes and Questions
+#  - Amazon Virtual Private Cloud Getting Started Guide:
+#       http://docs.amazonwebservices.com/AmazonVPC/latest/GettingStartedGuide
+#  - Amazon Virtual Private Cloud Network Administrator Guide:
+#       http://docs.amazonwebservices.com/AmazonVPC/latest/NetworkAdminGuide

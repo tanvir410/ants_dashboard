@@ -1,0 +1,11 @@
+---
+- source_ip: 10.0.1.1/32
+  dest_ip: 8.8.8.8/32
+  dest_port: 53
+  proto: udp
+  action: permit
+- source_ip: 10.0.1.1/32
+  dest_ip: 10.200.1.1/32
+  dest_port: 3306
+  proto: tcp
+  action: permit

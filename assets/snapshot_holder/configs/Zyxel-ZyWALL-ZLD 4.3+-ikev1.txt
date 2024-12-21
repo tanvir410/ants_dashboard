@@ -1,0 +1,282 @@
+
+! Amazon Web Services
+! Virtual Private Cloud
+
+! AWS utilizes unique identifiers to manipulate the configuration of
+! a VPN Connection. Each VPN Connection is assigned an identifier and is
+! associated with two other identifiers, namely the
+! Customer Gateway Identifier and Virtual Private Gateway Identifier.
+!
+! Your VPN Connection ID                  : vpn-123456789abc12345
+! Your Virtual Private Gateway ID         : vgw-00112233aabbcc112
+! Your Customer Gateway ID                : cgw-abcabcabc12312312
+!
+!
+! This configuration consists of two tunnels. Both tunnels must be
+! configured on your Customer Gateway for a redundant setup
+!
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #1
+! --------------------------------------------------------------------------------
+! #1: Internet Key Exchange (IKE) Configuration
+!
+! A policy is established for the supported ISAKMP encryption, authentication, Diffie-Hellman, lifetime,
+! and key parameters.The IKE peer is configured with the supported IKE encryption,  authentication, Diffie-Hellman, lifetime, and key
+! parameters.Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! You will need to modify these sample configuration files to take advantage of AES256, SHA256,  or other DH
+! groups like 2, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+! The address of the external interface for your customer gateway must be a static address.
+! Your customer gateway may reside behind a device performing network address translation (NAT). To
+! ensure that NAT traversal (NAT-T) can function, you must adjust your firewall rules to unblock UDP port 4500.
+
+!Note: For some versions:You might need to remove the default policy supporting MD5 and DES or other unsupported encryption/hashing algorithms.
+
+isakmp policy amazon-ike-vpn-123456789abc12345-0
+	mode main
+	local-ip ip <your-cgw-ip-address>
+	peer-ip <AWS_ENDPOINT_1>
+	authentication pre-share
+	keystring <pre-shared-key>
+	transform-set aes128-sha
+	group2
+	lifetime 28800
+	no natt
+	dpd
+	dpd-interval 15
+	activate
+exit
+
+!---------------------------------------------------------------------------------
+! #3: IPSec Configuration
+!
+! The crypto map defines the  IPSec transform set and other IPsec parameters .
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 1,2, 5, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+!
+
+crypto map amazon-ipsec-vpn-123456789abc12345-0
+	ipsec-isakmp amazon-ike-vpn-123456789abc12345-0
+	adjust-mss 1379
+	scenario vpn-tunnel-interface
+	encapsulation tunnel
+	transform-set esp-aes128-sha256
+	set security-association lifetime seconds 3600
+	set pfs group2
+	local-policy any
+	remote-policy any
+	activate
+exit
+
+
+
+! Configure your device to ignore any "Don't Fragment" bit set in the packets that carry this bit and yet must be fragmented ,enabling
+! them to be fragmented. Please note that the below configuration is global and affects other IPsec associations as well
+
+crypto ignore-df-bit
+
+!---------------------------------------------------------------------------------
+! #3: Tunnel Interface Configuration
+!
+! A tunnel interface is configured to be the logical interface associated with the tunnel.
+! All traffic routed to the tunnel interface will be encrypted and transmitted to the VPC.
+! Similarly, traffic from the VPC will be logically received on this interface.
+!
+! You need to set the ping check Period, Timeout and Fail Tolerance to check if the tunnel is up, for failover of traffic between tunnels.
+! Period is number of seconds between pings. Timeout is number of seconds to wait for a response before the attempt is a failure.
+! Fail Tolerance is the number of consecutive failures the Zyxel gateway remove routing on this tunnel interface, and the routing on the
+! second tunnel interface will become active.
+! Using the respective values of 5, 3 and 2, your tunnel will failover in 10 seconds.
+!
+
+interface vti0
+  ip address 169.254.225.142 255.255.255.252
+  ping-check 169.254.225.141 method icmp period 5 timeout 3 fail-tolerance 2
+  no shutdown
+exit
+
+! Association tunnel interface with the IPSec security association is done through the
+! "binding interface" command.
+
+binding interface vti0 crypto-map amazon-ipsec-vpn-123456789abc12345-0
+
+! Tunnel interface needs to be associated to Zone, we are using IPSec_VPN zone as an example, please adjust accordingly.
+
+zone IPSec_VPN
+  interface vti0
+exit
+
+! ----------------------------------------------------------------------------
+! #4 Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+!
+! The local BGP Autonomous System Number (ASN) (65000)
+! is configured as part of your Customer Gateway. If the ASN must
+! be changed, the Customer Gateway and VPN Connection will need to be recreated with AWS.
+!
+!Please advertise prefixes on the BGP for second tunnel by using attributes such as AS-PATH prepend in order to prefer one tunnel at a time and avaoid any issues caused due to asymmetric routing.
+! Your Customer Gateway may announce a default route (0.0.0.0/0) to us or advertise your specific LAN prefixes over BGP.
+
+router bgp
+  router-id  <your-cgw-ip-address>
+  as-number 65000
+  neighbor 169.254.225.141 remote-as 64512
+  neighbor 169.254.225.141 timers 10 30
+  network 0.0.0.0/0
+exit
+
+
+
+
+!---------------------------------------------------------------------------------------
+!  Additional Notes and Questions
+!  - Amazon Virtual Private Cloud Getting Started Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/GettingStartedGuide
+!  - Amazon Virtual Private Cloud Network Administrator Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/NetworkAdminGuide
+!  - Generic VPN tunnel connectivity Connectivity:
+!       https://aws.amazon.com/premiumsupport/knowledge-center/vpn-tunnel-troubleshooting/
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #2
+! --------------------------------------------------------------------------------
+! #1: Internet Key Exchange (IKE) Configuration
+!
+! A policy is established for the supported ISAKMP encryption, authentication, Diffie-Hellman, lifetime,
+! and key parameters.The IKE peer is configured with the supported IKE encryption,  authentication, Diffie-Hellman, lifetime, and key
+! parameters.Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! You will need to modify these sample configuration files to take advantage of AES256, SHA256,  or other DH
+! groups like 2, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+! The address of the external interface for your customer gateway must be a static address.
+! Your customer gateway may reside behind a device performing network address translation (NAT). To
+! ensure that NAT traversal (NAT-T) can function, you must adjust your firewall rules to unblock UDP port 4500.
+
+!Note: For some versions:You might need to remove the default policy supporting MD5 and DES or other unsupported encryption/hashing algorithms.
+
+isakmp policy amazon-ike-vpn-123456789abc12345-1
+	mode main
+	local-ip ip <your-cgw-ip-address>
+	peer-ip <AWS_ENDPOINT_2>
+	authentication pre-share
+	keystring <pre-shared-key>
+	transform-set aes128-sha
+	group2
+	lifetime 28800
+	no natt
+	dpd
+	dpd-interval 15
+	activate
+exit
+
+!---------------------------------------------------------------------------------
+! #3: IPSec Configuration
+!
+! The crypto map defines the  IPSec transform set and other IPsec parameters .
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 1,2, 5, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+!
+
+crypto map amazon-ipsec-vpn-123456789abc12345-1
+	ipsec-isakmp amazon-ike-vpn-123456789abc12345-1
+	adjust-mss 1379
+	scenario vpn-tunnel-interface
+	encapsulation tunnel
+	transform-set esp-aes128-sha256
+	set security-association lifetime seconds 3600
+	set pfs group2
+	local-policy any
+	remote-policy any
+	activate
+exit
+
+
+
+! Configure your device to ignore any "Don't Fragment" bit set in the packets that carry this bit and yet must be fragmented ,enabling
+! them to be fragmented. Please note that the below configuration is global and affects other IPsec associations as well
+
+crypto ignore-df-bit
+
+!---------------------------------------------------------------------------------
+! #3: Tunnel Interface Configuration
+!
+! A tunnel interface is configured to be the logical interface associated with the tunnel.
+! All traffic routed to the tunnel interface will be encrypted and transmitted to the VPC.
+! Similarly, traffic from the VPC will be logically received on this interface.
+!
+! You need to set the ping check Period, Timeout and Fail Tolerance to check if the tunnel is up, for failover of traffic between tunnels.
+! Period is number of seconds between pings. Timeout is number of seconds to wait for a response before the attempt is a failure.
+! Fail Tolerance is the number of consecutive failures the Zyxel gateway remove routing on this tunnel interface, and the routing on the
+! second tunnel interface will become active.
+! Using the respective values of 5, 3 and 2, your tunnel will failover in 10 seconds.
+!
+
+interface vti1
+  ip address 169.254.121.206 255.255.255.252
+  ping-check 169.254.121.205 method icmp period 5 timeout 3 fail-tolerance 2
+  no shutdown
+exit
+
+! Association tunnel interface with the IPSec security association is done through the
+! "binding interface" command.
+
+binding interface vti1 crypto-map amazon-ipsec-vpn-123456789abc12345-1
+
+! Tunnel interface needs to be associated to Zone, we are using IPSec_VPN zone as an example, please adjust accordingly.
+
+zone IPSec_VPN
+  interface vti1
+exit
+
+! ----------------------------------------------------------------------------
+! #4 Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+!
+! The local BGP Autonomous System Number (ASN) (65000)
+! is configured as part of your Customer Gateway. If the ASN must
+! be changed, the Customer Gateway and VPN Connection will need to be recreated with AWS.
+!
+!Please advertise prefixes on the BGP for second tunnel by using attributes such as AS-PATH prepend in order to prefer one tunnel at a time and avaoid any issues caused due to asymmetric routing.
+! Your Customer Gateway may announce a default route (0.0.0.0/0) to us or advertise your specific LAN prefixes over BGP.
+
+router bgp
+  router-id  <your-cgw-ip-address>
+  as-number 65000
+  neighbor 169.254.121.205 remote-as 64512
+  neighbor 169.254.121.205 timers 10 30
+  network 0.0.0.0/0
+exit
+
+
+
+
+!---------------------------------------------------------------------------------------
+!  Additional Notes and Questions
+!  - Amazon Virtual Private Cloud Getting Started Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/GettingStartedGuide
+!  - Amazon Virtual Private Cloud Network Administrator Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/NetworkAdminGuide
+!  - Generic VPN tunnel connectivity Connectivity:
+!       https://aws.amazon.com/premiumsupport/knowledge-center/vpn-tunnel-troubleshooting/
+
+2009-07-15-1119716
+!

@@ -1,0 +1,299 @@
+! Amazon Web Services
+! Virtual Private Cloud
+
+! AWS utilizes unique identifiers to manipulate the configuration of
+! a VPN Connection. Each VPN Connection is assigned an identifier and is
+! associated with two other identifiers, namely the
+! Customer Gateway Identifier and Virtual Private Gateway Identifier.
+!
+! Your VPN Connection ID 		  : vpn-123456789abc12345
+! Your Virtual Private Gateway ID         : vgw-00112233aabbcc112
+! Your Customer Gateway ID		  : cgw-abcabcabc12312312
+!
+!
+! This configuration consists of two tunnels. Both tunnels must be
+! configured on your Customer Gateway.
+!
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #1
+! --------------------------------------------------------------------------------
+! #1: Internet Key Exchange (IKE) Configuration
+!
+! A proposal is established for the supported ISAKMP encryption,
+! authentication, Diffie-Hellman, lifetime, and key parameters.
+! Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! You will need to modify these sample configuration files to take advantage of AES256, SHA256, or other DH groups like 2, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+! The address of the external interface for your customer gateway must be a static address.
+! Your customer gateway may reside behind a device performing network address translation (NAT).
+! To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall !rules to unblock UDP port 4500.
+| If not behind NAT, and you are not using an Accelerated VPN, we recommend disabling NAT-T. If you are using an Accelerated VPN, make sure that NAT-T is enabled.
+!
+! Note this proposal is defined as 200, which may conflict with
+! an existing policy using the same name. If so, we recommend changing
+! the name to avoid conflicts.
+!
+ike proposal 200
+  encryption-algorithm aes-cbc
+  authentication-method pre-share
+  dh group2
+  sa duration 28800
+  authentication-algorithm sha
+quit
+
+!
+! This option enables IPSec Dead Peer Detection, which causes periodic
+! messages to be sent to ensure a Security Association remains operational.
+!
+ike dpd dpdvpn1
+  interval-time 10
+  time-out 10
+quit
+!
+! Configure IKE peer with Pre Shared Key and appropiate IKE proposal
+!
+ike peer peervpn1
+  remote-address <AWS_ENDPOINT_1>
+  pre-shared-key <pre-shared-key>
+  exchange-mode main
+  proposal 200
+  dpd dpdvpn1
+quit
+
+
+! #2: IPSec Configuration
+!
+! The IPSec transform set defines the encryption, authentication, and IPSec
+! mode parameters.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 2, 5, 14-18, 22, 23, and 24.
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+!
+ipsec transform-set ipsec-prop-vpn1
+  encapsulation-mode tunnel
+  esp encryption-algorithm aes-cbc-128
+  esp authentication-algorithm sha1
+quit
+! The IPSec profile references the IPSec transform set and further defines
+! the Diffie-Hellman group and security association lifetime.
+!
+ipsec profile ipsecvpn1
+  ike-peer peervpn1
+  pfs dh-group2
+  sa duration time-based 3600
+  transform-set ipsec-prop-vpn1
+quit
+
+! Additional parameters of the IPSec configuration are set here. Note that
+! these parameters are global and therefore impact other IPSec
+! associations.
+
+!  IPsec anti-replay checking is enabled by default and window size is 32. A larger window can be helpful if too many packets
+! are dropped due to reordering while in transit between gateways.
+!
+
+ipsec anti-replay check
+   ipsec anti-replay window 128
+
+
+! --------------------------------------------------------------------------------
+! #3: Tunnel Interface Configuration
+!
+! A tunnel interface is configured to be the logical interface associated
+! with the tunnel. All traffic routed to the tunnel interface will be
+! encrypted and transmitted to the VPC. Similarly, traffic from the VPC
+! will be logically received on this interface.
+!
+! Association with the IPSec security association is done through the
+! "ipsec profile" command.
+!
+! The address of the interface is configured with the setup for your
+! Customer Gateway.  If the address changes, the Customer Gateway and VPN
+! Connection must be recreated with Amazon VPC.
+!
+interface Tunnel1
+  ip address 169.254.225.142 255.255.255.252
+  ip virtual-reassembly
+  source <your-cgw-ip-address>
+  destination <AWS_ENDPOINT_1>
+  tunnel-protocol ipsec ipv4
+  ipsec profile ipsecvpn1
+  tcp mss 1379
+  undo shutdown
+quit
+
+! --------------------------------------------------------------------------------
+
+! #4: Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+! Your Customer Gateway may announce a default route (0.0.0.0/0),
+! which can be done with the 'network' or 'default-route-advertise' statements.
+!
+! The BGP timers are adjusted to provide more rapid detection of outages.
+!
+! The local BGP Autonomous System Number (ASN) (65000) is configured
+! as part of your Customer Gateway. If the ASN must be changed, the
+! Customer Gateway and VPN Connection will need to be recreated with AWS.
+!
+bgp 65000
+  peer 169.254.225.141 as-number 64512
+  peer 169.254.225.141 timer keepalive 10 hold 30
+  peer 169.254.225.141 enable
+! To advertise additional prefixes to Amazon VPC, copy the 'network' statement
+! and identify the prefix you wish to advertise. Make sure the prefix is present
+! in the routing table of the device with a valid next-hop.
+  network 0.0.0.0
+  quit
+!
+! --------------------------------------------------------------------------------
+! IPSec Tunnel #2
+! --------------------------------------------------------------------------------
+! #1: Internet Key Exchange (IKE) Configuration
+!
+! A proposal is established for the supported ISAKMP encryption,
+! authentication, Diffie-Hellman, lifetime, and key parameters.
+! Please note, these sample configurations are for the minimum requirement of AES128, SHA1, and DH Group 2.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! You will need to modify these sample configuration files to take advantage of AES256, SHA256, or other DH groups like 2, 14-18, 22, 23, and 24.
+! NOTE: If you customized tunnel options when creating or modifying your VPN connection, you may need to modify these sample configurations to match the custom settings for your tunnels.
+!
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+! The address of the external interface for your customer gateway must be a static address.
+! Your customer gateway may reside behind a device performing network address translation (NAT).
+! To ensure that NAT traversal (NAT-T) can function, you must adjust your firewall !rules to unblock UDP port 4500.
+| If not behind NAT, and you are not using an Accelerated VPN, we recommend disabling NAT-T. If you are using an Accelerated VPN, make sure that NAT-T is enabled.
+!
+! Note this proposal is defined as 201, which may conflict with
+! an existing policy using the same name. If so, we recommend changing
+! the name to avoid conflicts.
+!
+ike proposal 201
+  encryption-algorithm aes-cbc
+  authentication-method pre-share
+  dh group2
+  sa duration 28800
+  authentication-algorithm sha
+quit
+
+!
+! This option enables IPSec Dead Peer Detection, which causes periodic
+! messages to be sent to ensure a Security Association remains operational.
+!
+ike dpd dpdvpn2
+  interval-time 10
+  time-out 10
+quit
+!
+! Configure IKE peer with Pre Shared Key and appropiate IKE proposal
+!
+ike peer peervpn2
+  remote-address <AWS_ENDPOINT_2>
+  pre-shared-key <pre-shared-key>
+  exchange-mode main
+  proposal 201
+  dpd dpdvpn2
+quit
+
+
+! #2: IPSec Configuration
+!
+! The IPSec transform set defines the encryption, authentication, and IPSec
+! mode parameters.
+! Category "VPN" connections in the GovCloud region have a minimum requirement of AES128, SHA2, and DH Group 14.
+! Please note, you may use these additionally supported IPSec parameters for encryption like AES256 and other DH groups like 2, 5, 14-18, 22, 23, and 24.
+! Higher parameters are only available for VPNs of category "VPN," and not for "VPN-Classic".
+!
+ipsec transform-set ipsec-prop-vpn2
+  encapsulation-mode tunnel
+  esp encryption-algorithm aes-cbc-128
+  esp authentication-algorithm sha1
+quit
+! The IPSec profile references the IPSec transform set and further defines
+! the Diffie-Hellman group and security association lifetime.
+!
+ipsec profile ipsecvpn2
+  ike-peer peervpn2
+  pfs dh-group2
+  sa duration time-based 3600
+  transform-set ipsec-prop-vpn2
+quit
+
+! Additional parameters of the IPSec configuration are set here. Note that
+! these parameters are global and therefore impact other IPSec
+! associations.
+
+!  IPsec anti-replay checking is enabled by default and window size is 32. A larger window can be helpful if too many packets
+! are dropped due to reordering while in transit between gateways.
+!
+
+ipsec anti-replay check
+   ipsec anti-replay window 128
+
+
+! --------------------------------------------------------------------------------
+! #3: Tunnel Interface Configuration
+!
+! A tunnel interface is configured to be the logical interface associated
+! with the tunnel. All traffic routed to the tunnel interface will be
+! encrypted and transmitted to the VPC. Similarly, traffic from the VPC
+! will be logically received on this interface.
+!
+! Association with the IPSec security association is done through the
+! "ipsec profile" command.
+!
+! The address of the interface is configured with the setup for your
+! Customer Gateway.  If the address changes, the Customer Gateway and VPN
+! Connection must be recreated with Amazon VPC.
+!
+interface Tunnel2
+  ip address 169.254.121.206 255.255.255.252
+  ip virtual-reassembly
+  source <your-cgw-ip-address>
+  destination <AWS_ENDPOINT_2>
+  tunnel-protocol ipsec ipv4
+  ipsec profile ipsecvpn2
+  tcp mss 1379
+  undo shutdown
+quit
+
+! --------------------------------------------------------------------------------
+
+! #4: Border Gateway Protocol (BGP) Configuration
+!
+! BGP is used within the tunnel to exchange prefixes between the
+! Virtual Private Gateway and your Customer Gateway. The Virtual Private Gateway
+! will announce the prefix corresponding to your VPC.
+!
+! Your Customer Gateway may announce a default route (0.0.0.0/0),
+! which can be done with the 'network' or 'default-route-advertise' statements.
+!
+! The BGP timers are adjusted to provide more rapid detection of outages.
+!
+! The local BGP Autonomous System Number (ASN) (65000) is configured
+! as part of your Customer Gateway. If the ASN must be changed, the
+! Customer Gateway and VPN Connection will need to be recreated with AWS.
+!
+bgp 65000
+  peer 169.254.121.205 as-number 64512
+  peer 169.254.121.205 timer keepalive 10 hold 30
+  peer 169.254.121.205 enable
+! To advertise additional prefixes to Amazon VPC, copy the 'network' statement
+! and identify the prefix you wish to advertise. Make sure the prefix is present
+! in the routing table of the device with a valid next-hop.
+  network 0.0.0.0
+  quit
+!
+
+
+! Additional Notes and Questions
+!  - Amazon Virtual Private Cloud Getting Started Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/GettingStartedGuide
+!  - Amazon Virtual Private Cloud Network Administrator Guide:
+!       http://docs.amazonwebservices.com/AmazonVPC/latest/NetworkAdminGuide
